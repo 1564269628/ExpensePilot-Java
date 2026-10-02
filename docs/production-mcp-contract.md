@@ -108,10 +108,14 @@ MCP 异常分为两类：
 
 ### parse_invoices
 
-读取 email/drive 中的材料引用，调用企业 OCR/电子发票服务完成结构化解析。
+输入必须包含由 JWT subject 固化的 `userId`。读取 email/drive 中的材料引用时，
+MCP Server 必须再次校验这些引用是否属于该用户，再调用企业 OCR/电子发票服务完成结构化解析。
 输出发票代码、号码、金额、税额、时间、购买方/销售方、文件引用及验真状态。
 
 ### validate_materials
+
+输入必须包含 `userId`。对于用户补交的 `supplementalMaterials` 文件引用，
+MCP Server 必须做文件归属/数据权限校验，不能只相信客户端传来的 ref。
 
 把发票与差旅订单对账，输出：
 

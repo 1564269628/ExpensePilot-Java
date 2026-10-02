@@ -44,6 +44,13 @@ public class PlanAuditService {
                     output.planSummary()
             );
 
+            // agent_plan 表示“当前生效计划”；Replan 后只保留当前计划对应的 step 快照，
+            // 避免新的 LLM stepKey 与旧 stepKey 同时残留，造成一条任务看起来有两套 DAG。
+            jdbcTemplate.update(
+                    "delete from agent_step where task_id=?",
+                    taskId
+            );
+
             for (PlannedTask task : output.tasks()) {
                 jdbcTemplate.update("""
                         insert into agent_step(
@@ -51,10 +58,6 @@ public class PlanAuditService {
                             depends_on_json,input_json,retry_count
                         )
                         values (?, ?, ?, 'PENDING', cast(? as json), cast(? as json), 0)
-                        on duplicate key update
-                            step_type=values(step_type),
-                            depends_on_json=values(depends_on_json),
-                            input_json=values(input_json)
                         """,
                         taskId,
                         task.stepKey(),

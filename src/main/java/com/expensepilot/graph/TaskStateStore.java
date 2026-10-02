@@ -4,6 +4,7 @@ import com.expensepilot.cache.TaskContextCache;
 import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Optional;
 
@@ -54,6 +55,7 @@ public class TaskStateStore {
      * 连续失败后创建新的 Graph thread，从 Planner 重新生成计划。
      * retry_count 不清零，保证恢复阶梯最终能够升级到人工接管。
      */
+    @Transactional
     public TaskSnapshot resetForReplan(long taskId, String newThreadId) {
         TaskSnapshot snapshot = require(taskId);
         int affected = jdbcTemplate.update("""
@@ -71,6 +73,13 @@ public class TaskStateStore {
             throw new IllegalStateException(
                     "Replan CAS 失败，任务状态可能已变化: " + taskId);
         }
+
+        // Replan 可能改变材料/政策/报销草稿，旧审批不能继续授权新计划。
+        jdbcTemplate.update(
+                "delete from approval_record where task_id=?",
+                taskId
+        );
+
         taskContextCache.evict(taskId);
         return require(taskId);
     }

@@ -149,6 +149,7 @@ public class ExpenseGraphNodes {
                 string(state, USER_ID),
                 "parse_invoices",
                 Map.of(
+                        "userId", string(state, USER_ID),
                         "email", requireMap(state, EMAIL_RESULT),
                         "drive", requireMap(state, DRIVE_RESULT),
                         "travel", requireMap(state, TRAVEL_RESULT)
@@ -161,6 +162,7 @@ public class ExpenseGraphNodes {
 
     public Map<String, Object> checkMaterial(OverAllState state) {
         Map<String, Object> args = new LinkedHashMap<>();
+        args.put("userId", string(state, USER_ID));
         args.put("invoices", requireMap(state, INVOICE_RESULT));
         args.put("travel", requireMap(state, TRAVEL_RESULT));
         args.put("supplementalMaterials", state.value(SUPPLEMENTAL_MATERIALS).orElse(List.of()));

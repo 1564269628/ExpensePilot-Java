@@ -41,11 +41,13 @@ public class ToolArgumentValidator {
                 validateTripRange(call.arguments());
             }
             case "parse_invoices" -> {
+                requireIdentity(call);
                 requireMap(call.arguments(), "email");
                 requireMap(call.arguments(), "drive");
                 requireMap(call.arguments(), "travel");
             }
             case "validate_materials" -> {
+                requireIdentity(call);
                 requireMap(call.arguments(), "invoices");
                 requireMap(call.arguments(), "travel");
             }

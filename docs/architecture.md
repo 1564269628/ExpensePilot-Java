@@ -62,8 +62,9 @@ Checkpoint 使用 Spring AI Alibaba 自带 `MysqlSaver`，而不是业务代码�
 2. 查询类 MCP 瞬时失败：ToolGateway 有限指数退避；
 3. 邮箱 / 网盘持续不可用：安全降级为空材料，后续进入人工补件；
 4. Graph / 进程级失败前两次：从 checkpoint 续跑；
-5. 持续失败：换新的 Graph `threadId`，重新经过 Planner 做 Replan；
-6. 恢复预算耗尽：`MANUAL_TAKEOVER`。
+5. 持续失败：换新的 Graph `threadId`，事务性清除旧审批后重新经过 Planner 做 Replan；
+6. 新 Planner 输出覆盖当前 `agent_plan`，并重建当前计划的 `agent_step` 快照，避免残留两套 stepKey；
+7. 恢复预算耗尽：`MANUAL_TAKEOVER`。
 
 差旅、政策这类关键事实不能通过猜测降级。
 
