@@ -47,6 +47,13 @@ ExpensePilot 对 Tool 名称做契约，不依赖物理部署数量。
 - 通知事件里的 `taskId` 必须和 `ToolCall.taskId` 一致；
 - `submit_expense_report / send_notification` 必须显式标记为副作用。
 
+MCP 异常分为两类：
+
+- `McpTransportException`：网络、远端调用等传输失败；查询 Tool 可以有限重试，
+  邮箱/网盘在达到上限后才允许安全降级。
+- `McpContractException`：返回 JSON、Envelope、字段类型或 Tool 注册契约错误；
+  **禁止降级成“空材料”**，必须立即失败并进入恢复/告警，避免把系统故障伪装成缺票。
+
 `query_expense_submission` 和 `query_notification` 是 SideEffectGuard 在 UNKNOWN 对账时
 直接通过 `ExpenseMcpClient` 调用的内部回查 Tool，不暴露在 ToolGateway 的普通业务白名单里。
 

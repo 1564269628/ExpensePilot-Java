@@ -106,7 +106,7 @@ public class ToolGateway {
                     return result;
                 }
             }
-            catch (RuntimeException ex) {
+            catch (McpTransportException ex) {
                 lastException = ex;
             }
 
