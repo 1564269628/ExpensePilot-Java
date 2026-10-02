@@ -1,6 +1,5 @@
 package com.expensepilot.agent;
 
-import com.expensepilot.domain.StepType;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -8,7 +7,6 @@ import org.springframework.stereotype.Component;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.List;
-import java.util.Set;
 
 /**
  * 使用 Spring AI Structured Output 的生产 Planner。
@@ -21,9 +19,6 @@ import java.util.Set;
  */
 @Component
 public class Planner {
-
-    private static final Set<StepType> SIDE_EFFECT_TYPES =
-            Set.of(StepType.SUBMIT_REPORT, StepType.SEND_NOTIFICATION);
 
     private final ChatClient chatClient;
     private final PlanValidator planValidator;
@@ -97,15 +92,15 @@ public class Planner {
                    CHECK_MATERIAL -> PARSE_INVOICE；
                    CHECK_POLICY -> CHECK_MATERIAL；
                    GENERATE_REPORT -> CHECK_POLICY；
-                   SUBMIT_REPORT -> GENERATE_REPORT；
-                   SEND_NOTIFICATION -> SUBMIT_REPORT。
+                   SUBMIT_REPORT -> GENERATE_REPORT。
                 4. 查询邮箱、网盘、差旅三个节点应共享同一个前置节点，从而由 Graph 并行执行。
-                5. SUBMIT_REPORT、SEND_NOTIFICATION 必须 sideEffect=true；其他步骤必须 false。
-                6. 不得根据常识编造发票、金额、订单号、审批结果或企业政策。
-                7. 日期表达如“上周”需要结合我提供的当前业务日期计算。
-                8. 若城市/日期等关键字段无法从原文安全确定，在 TripScope.unknownFields 中标记，
+                5. SUBMIT_REPORT 必须 sideEffect=true；其他步骤必须 false。
+                6. 通知不是 Planner 节点。提交成功后由确定性的 Outbox -> RocketMQ -> Notification MCP 链路触发。
+                7. 不得根据常识编造发票、金额、订单号、审批结果或企业政策。
+                8. 日期表达如“上周”需要结合我提供的当前业务日期计算。
+                9. 若城市/日期等关键字段无法从原文安全确定，在 TripScope.unknownFields 中标记，
                    needsClarification=true，并生成 clarificationQuestions。
-                9. planSummary 只输出简短可审计说明，不输出隐含推理过程。
+                10. planSummary 只输出简短可审计说明，不输出隐含推理过程。
                 """;
     }
 

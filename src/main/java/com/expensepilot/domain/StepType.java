@@ -1,8 +1,10 @@
 package com.expensepilot.domain;
 
 /**
- * DAG 中的任务类型。
- * 查询型步骤和副作用步骤分开，是后续重试与幂等策略的基础。
+ * Planner 主路径 DAG 中的业务步骤类型。
+ *
+ * <p>补件和人工审批是 Graph Runtime 条件分支；通知是提交成功后由
+ * Outbox/RocketMQ 驱动的确定性异步链路，因此都不属于 Planner 主路径。</p>
  */
 public enum StepType {
     RESOLVE_TRIP_RANGE,
@@ -15,6 +17,5 @@ public enum StepType {
     REQUEST_SUPPLEMENT,
     HUMAN_APPROVAL,
     GENERATE_REPORT,
-    SUBMIT_REPORT,
-    SEND_NOTIFICATION
+    SUBMIT_REPORT
 }

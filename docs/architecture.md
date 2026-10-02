@@ -20,6 +20,10 @@ Planner 使用 `ChatClient.call().entity(PlanOutput.class)` 生成强类型 `Pla
 因此 DAG 不是“只给人看的假计划”；它必须与真正执行的 Graph 主路径一致。
 补件、人工审批、Replan 属于 Runtime 条件分支，不放进主路径 DAG。
 
+Planner 主路径只到 `SUBMIT_REPORT`。提交成功后的通知不由 LLM 规划，而是进入
+`Outbox -> RocketMQ -> Notification MCP` 的确定性异步链路。这样 Planner DAG
+和同步 StateGraph 不会因为异步消息流程而出现“两套拓扑”。
+
 ## 2. Graph-first 工作流
 
 固定拓扑和条件分支都在 `ExpenseGraphConfig` 中声明：

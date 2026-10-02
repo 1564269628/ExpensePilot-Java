@@ -46,8 +46,11 @@ chatClient.prompt()
 ```
 
 模型返回 `PlanOutput -> TripScope + List<PlannedTask>`，随后必须经过
-`PlanValidator` 的确定性检查：节点唯一、依赖存在、无环、副作用标记正确、
-必要业务步骤完整。LLM 不拥有最终执行权限。
+`PlanValidator` 的确定性检查：节点唯一、依赖存在、无环、副作用标记正确，
+并逐项校验 DAG 是否与生产 StateGraph 主路径一致。LLM 不拥有最终执行权限。
+
+Planner 只规划到 `SUBMIT_REPORT`。通知不交给 LLM 规划；报销提交成功后由
+`Transactional Outbox -> RocketMQ -> Notification MCP` 确定性触发。
 
 ## Graph API
 

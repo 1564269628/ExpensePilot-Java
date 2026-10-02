@@ -17,7 +17,7 @@ import java.util.*;
 public class PlanValidator {
 
     private static final Set<StepType> SIDE_EFFECT_TYPES =
-            Set.of(StepType.SUBMIT_REPORT, StepType.SEND_NOTIFICATION);
+            Set.of(StepType.SUBMIT_REPORT);
 
     private static final Set<StepType> RUNTIME_BRANCH_TYPES =
             Set.of(StepType.REQUEST_SUPPLEMENT, StepType.HUMAN_APPROVAL);
@@ -40,8 +40,7 @@ public class PlanValidator {
                     StepType.CHECK_MATERIAL, Set.of(StepType.PARSE_INVOICE),
                     StepType.CHECK_POLICY, Set.of(StepType.CHECK_MATERIAL),
                     StepType.GENERATE_REPORT, Set.of(StepType.CHECK_POLICY),
-                    StepType.SUBMIT_REPORT, Set.of(StepType.GENERATE_REPORT),
-                    StepType.SEND_NOTIFICATION, Set.of(StepType.SUBMIT_REPORT)
+                    StepType.SUBMIT_REPORT, Set.of(StepType.GENERATE_REPORT)
             );
 
     public void validate(PlanOutput output) {

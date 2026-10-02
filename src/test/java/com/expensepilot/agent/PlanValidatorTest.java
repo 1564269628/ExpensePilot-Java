@@ -114,8 +114,7 @@ class PlanValidatorTest {
                 task("material", StepType.CHECK_MATERIAL, List.of("parse"), false),
                 task("policy", StepType.CHECK_POLICY, List.of("material"), false),
                 task("report", StepType.GENERATE_REPORT, List.of("policy"), false),
-                task("submit", StepType.SUBMIT_REPORT, List.of("report"), true),
-                task("notify", StepType.SEND_NOTIFICATION, List.of("submit"), true)
+                task("submit", StepType.SUBMIT_REPORT, List.of("report"), true)
         );
 
         return new PlanOutput(
