@@ -3,20 +3,28 @@ package com.expensepilot.recovery;
 import org.springframework.stereotype.Component;
 
 /**
- * “有限重试 -> 参数修复 -> 降级 -> Replan -> 人工接管”的确定性策略。
+ * 任务级恢复阶梯。
+ *
+ * <p>参数修复在 Planner Structured Output 校验循环完成；
+ * 只读 Tool 的瞬时重试/安全降级在 ToolGateway 完成；
+ * 这里负责跨 Graph 执行的“续跑 -> Replan -> 人工接管”。</p>
  */
 @Component
 public class RecoveryPolicy {
 
-    public RecoveryAction decide(String errorCode, int retryCount) {
-        if ("TIMEOUT".equals(errorCode) && retryCount < 3) return RecoveryAction.RETRY;
-        if ("INVALID_ARGUMENT".equals(errorCode) && retryCount < 2) return RecoveryAction.REPAIR_ARGUMENTS;
-        if ("UPSTREAM_UNAVAILABLE".equals(errorCode) && retryCount < 3) return RecoveryAction.FALLBACK;
-        if (retryCount < 5) return RecoveryAction.REPLAN;
+    public RecoveryAction decide(int retryCount) {
+        if (retryCount <= 2) {
+            return RecoveryAction.RESUME_CHECKPOINT;
+        }
+        if (retryCount <= 4) {
+            return RecoveryAction.REPLAN;
+        }
         return RecoveryAction.MANUAL_TAKEOVER;
     }
 
     public enum RecoveryAction {
-        RETRY, REPAIR_ARGUMENTS, FALLBACK, REPLAN, MANUAL_TAKEOVER
+        RESUME_CHECKPOINT,
+        REPLAN,
+        MANUAL_TAKEOVER
     }
 }

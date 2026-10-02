@@ -9,9 +9,6 @@ import java.util.Optional;
 
 /**
  * MySQL 业务状态事实源。
- *
- * <p>Graph Checkpoint 决定“从哪里继续”，expense_task 决定“业务事实是什么”。
- * 状态迁移使用 version CAS；成功后主动失效 Redis 热点视图。</p>
  */
 @Repository
 @RequiredArgsConstructor
@@ -22,34 +19,21 @@ public class TaskStateStore {
 
     public int update(long taskId, String status, String node) {
         TaskSnapshot snapshot = require(taskId);
-
         int affected = jdbcTemplate.update("""
                 update expense_task
-                   set status=?,
-                       current_node=?,
-                       last_error=null,
-                       version=version+1
+                   set status=?, current_node=?, last_error=null, version=version+1
                  where id=? and version=?
-                """,
-                status,
-                node,
-                taskId,
-                snapshot.version()
-        );
+                """, status, node, taskId, snapshot.version());
 
         if (affected != 1) {
             throw new IllegalStateException(
                     "任务状态发生并发更新，CAS 失败: taskId=" + taskId
                             + ", expectedVersion=" + snapshot.version());
         }
-
         taskContextCache.evict(taskId);
         return snapshot.version() + 1;
     }
 
-    /**
-     * 异常标记不推进 version，避免 DB version 与最近 Graph Checkpoint 无谓错位。
-     */
     public void markError(long taskId, String node, Throwable error) {
         jdbcTemplate.update("""
                 update expense_task
@@ -59,23 +43,59 @@ public class TaskStateStore {
                        retry_count=retry_count+1
                  where id=?
                    and status not in (
-                       'WAITING_INPUT',
-                       'WAITING_MATERIAL',
-                       'WAITING_APPROVAL',
-                       'SUCCEEDED',
-                       'REJECTED'
+                       'WAITING_INPUT','WAITING_MATERIAL','WAITING_APPROVAL',
+                       'SUCCEEDED','REJECTED','MANUAL_TAKEOVER'
                    )
-                """,
-                node,
-                safeMessage(error),
-                taskId
-        );
+                """, node, safeMessage(error), taskId);
         taskContextCache.evict(taskId);
+    }
+
+    /**
+     * 连续失败后创建新的 Graph thread，从 Planner 重新生成计划。
+     * retry_count 不清零，保证恢复阶梯最终能够升级到人工接管。
+     */
+    public TaskSnapshot resetForReplan(long taskId, String newThreadId) {
+        TaskSnapshot snapshot = require(taskId);
+        int affected = jdbcTemplate.update("""
+                update expense_task
+                   set status='CREATED',
+                       current_node='planner',
+                       thread_id=?,
+                       last_error=null,
+                       version=version+1
+                 where id=? and version=?
+                   and status in ('RETRYING','UNKNOWN')
+                """, newThreadId, taskId, snapshot.version());
+
+        if (affected != 1) {
+            throw new IllegalStateException(
+                    "Replan CAS 失败，任务状态可能已变化: " + taskId);
+        }
+        taskContextCache.evict(taskId);
+        return require(taskId);
+    }
+
+    public void markManualTakeover(long taskId, String reason) {
+        TaskSnapshot snapshot = require(taskId);
+        int affected = jdbcTemplate.update("""
+                update expense_task
+                   set status='MANUAL_TAKEOVER',
+                       current_node='manualTakeover',
+                       last_error=?,
+                       version=version+1
+                 where id=? and version=?
+                   and status in ('RETRYING','UNKNOWN','RUNNING')
+                """, reason, taskId, snapshot.version());
+
+        if (affected == 1) {
+            taskContextCache.evict(taskId);
+        }
     }
 
     public TaskSnapshot require(long taskId) {
         return jdbcTemplate.query("""
-                select id,user_id,request_text,status,current_node,thread_id,version
+                select id,user_id,request_text,status,current_node,thread_id,
+                       retry_count,version,last_error
                   from expense_task
                  where id=?
                 """,
@@ -86,7 +106,9 @@ public class TaskStateStore {
                         rs.getString("status"),
                         rs.getString("current_node"),
                         rs.getString("thread_id"),
-                        rs.getInt("version")
+                        rs.getInt("retry_count"),
+                        rs.getInt("version"),
+                        rs.getString("last_error")
                 ),
                 taskId
         ).stream().findFirst().orElseThrow(
@@ -114,6 +136,8 @@ public class TaskStateStore {
             String status,
             String currentNode,
             String threadId,
-            int version
+            int retryCount,
+            int version,
+            String lastError
     ) {}
 }

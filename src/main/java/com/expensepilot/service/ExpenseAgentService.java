@@ -16,18 +16,13 @@ import java.util.concurrent.Executor;
 import static com.expensepilot.graph.ExpenseGraphKeys.*;
 
 /**
- * Graph Runtime 应用入口。
- *
- * <p>这里不编排业务节点，只负责创建、恢复、人工输入和多实例执行租约。</p>
+ * Graph Runtime 应用入口，只负责创建/恢复/人工输入/重新规划，不手写业务工作流。
  */
 @Service
 public class ExpenseAgentService {
 
     private static final Set<String> AUTO_RECOVERABLE = Set.of(
-            "CREATED",
-            "RUNNING",
-            "RETRYING",
-            "UNKNOWN"
+            "CREATED","RUNNING","RETRYING","UNKNOWN"
     );
 
     private final JdbcTemplate jdbcTemplate;
@@ -64,19 +59,11 @@ public class ExpenseAgentService {
                 initialState(taskId, userId, requestText),
                 config(threadId)
         ));
-
         return taskId;
     }
 
-    /**
-     * 仅用于机器故障恢复。
-     *
-     * <p>WAITING_INPUT / WAITING_MATERIAL / WAITING_APPROVAL 绝不能通过这个接口
-     * “强行继续”，否则可能把缺失的人类决策当成默认值。它们必须走专用 Human API。</p>
-     */
     public void resume(long taskId) {
         TaskStateStore.TaskSnapshot task = taskStateStore.require(taskId);
-
         if (!AUTO_RECOVERABLE.contains(task.status())) {
             throw new IllegalStateException(
                     "当前状态不允许自动恢复: " + task.status()
@@ -85,7 +72,6 @@ public class ExpenseAgentService {
 
         graphExecutor.execute(() -> {
             if ("CREATED".equals(task.status())) {
-                // 解决“业务任务已 INSERT，但 JVM 在首次 graph.stream 前崩溃”的窗口。
                 execute(
                         taskId,
                         initialState(taskId, task.userId(), task.requestText()),
@@ -98,45 +84,62 @@ public class ExpenseAgentService {
         });
     }
 
-    public void resumeClarification(
-            long taskId,
-            Map<String, Object> statePatch) {
-        resumeHuman(
+    /**
+     * 多次 Checkpoint 续跑仍失败时，从新的 Graph thread 重新经过 Planner。
+     *
+     * <p>读操作允许重做；提交/通知等副作用即使再次走到，也会被 SideEffectGuard
+     * 的稳定业务幂等键挡住，因此 Replan 不等于重复报销。</p>
+     */
+    public void replan(long taskId) {
+        TaskStateStore.TaskSnapshot before = taskStateStore.require(taskId);
+        if (!Set.of("RETRYING","UNKNOWN").contains(before.status())) {
+            throw new IllegalStateException(
+                    "只有异常任务允许 Replan: " + before.status());
+        }
+
+        String newThreadId = "expense-" + taskId
+                + "-replan-" + before.retryCount()
+                + "-" + UUID.randomUUID().toString().substring(0, 8);
+
+        TaskStateStore.TaskSnapshot task =
+                taskStateStore.resetForReplan(taskId, newThreadId);
+
+        graphExecutor.execute(() -> execute(
                 taskId,
-                "WAITING_INPUT",
-                "requestClarification",
-                statePatch
-        );
+                initialState(taskId, task.userId(), task.requestText()),
+                config(task.threadId())
+        ));
     }
 
-    public void resumeSupplement(
-            long taskId,
-            Map<String, Object> statePatch) {
-        resumeHuman(
-                taskId,
-                "WAITING_MATERIAL",
-                "requestSupplement",
-                statePatch
-        );
+    public void assertApprovalReady(long taskId, String operationType) {
+        TaskStateStore.TaskSnapshot task = taskStateStore.require(taskId);
+        String expectedNode = approvalNode(operationType);
+        if (!"WAITING_APPROVAL".equals(task.status())
+                || !expectedNode.equals(task.currentNode())) {
+            throw new IllegalStateException(
+                    "任务当前不允许该审批: operationType=" + operationType
+                            + ", status=" + task.status()
+                            + ", node=" + task.currentNode());
+        }
+    }
+
+    public void resumeClarification(long taskId, Map<String, Object> patch) {
+        resumeHuman(taskId, "WAITING_INPUT", "requestClarification", patch);
+    }
+
+    public void resumeSupplement(long taskId, Map<String, Object> patch) {
+        resumeHuman(taskId, "WAITING_MATERIAL", "requestSupplement", patch);
     }
 
     public void resumeApproval(
             long taskId,
             String operationType,
-            Map<String, Object> statePatch) {
-
-        String expectedNode = switch (operationType) {
-            case "POLICY_EXCEPTION" -> "humanApproval";
-            case "SUBMIT_REPORT" -> "submitApproval";
-            default -> throw new IllegalArgumentException(
-                    "未知审批类型: " + operationType);
-        };
-
+            Map<String, Object> patch) {
         resumeHuman(
                 taskId,
                 "WAITING_APPROVAL",
-                expectedNode,
-                statePatch
+                approvalNode(operationType),
+                patch
         );
     }
 
@@ -147,7 +150,6 @@ public class ExpenseAgentService {
             Map<String, Object> statePatch) {
 
         TaskStateStore.TaskSnapshot task = taskStateStore.require(taskId);
-
         if (!expectedStatus.equals(task.status())
                 || !expectedNode.equals(task.currentNode())) {
             throw new IllegalStateException(
@@ -156,12 +158,10 @@ public class ExpenseAgentService {
         }
 
         RunnableConfig config = config(task.threadId());
-
         graphExecutor.execute(() -> {
             if (!taskLeaseService.tryAcquire(taskId)) {
                 return;
             }
-
             try {
                 RunnableConfig updated = expenseCompiledGraph.updateState(
                         config,
@@ -183,11 +183,9 @@ public class ExpenseAgentService {
             long taskId,
             Map<String, Object> input,
             RunnableConfig config) {
-
         if (!taskLeaseService.tryAcquire(taskId)) {
             return;
         }
-
         try {
             expenseCompiledGraph.stream(input, config).blockLast();
         }
@@ -197,6 +195,15 @@ public class ExpenseAgentService {
         finally {
             taskLeaseService.release(taskId);
         }
+    }
+
+    private String approvalNode(String operationType) {
+        return switch (operationType) {
+            case "POLICY_EXCEPTION" -> "humanApproval";
+            case "SUBMIT_REPORT" -> "submitApproval";
+            default -> throw new IllegalArgumentException(
+                    "未知审批类型: " + operationType);
+        };
     }
 
     private Map<String, Object> initialState(
@@ -211,14 +218,8 @@ public class ExpenseAgentService {
         );
     }
 
-    private RunnableConfig config(long taskId) {
-        return config(taskStateStore.threadId(taskId));
-    }
-
     private RunnableConfig config(String threadId) {
-        return RunnableConfig.builder()
-                .threadId(threadId)
-                .build();
+        return RunnableConfig.builder().threadId(threadId).build();
     }
 
     private long positiveId() {
