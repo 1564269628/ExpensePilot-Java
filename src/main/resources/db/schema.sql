@@ -80,3 +80,16 @@ CREATE TABLE IF NOT EXISTS consumed_event (
   consumer_group VARCHAR(128) NOT NULL,
   consumed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+
+CREATE TABLE IF NOT EXISTS approval_record (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  task_id BIGINT NOT NULL,
+  operation_type VARCHAR(64) NOT NULL,
+  status VARCHAR(32) NOT NULL,
+  approver VARCHAR(128),
+  comment_text VARCHAR(500),
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  decided_at DATETIME,
+  UNIQUE KEY uk_task_operation(task_id, operation_type)
+);
