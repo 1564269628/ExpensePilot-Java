@@ -12,6 +12,7 @@ import com.expensepilot.tool.ToolResult;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.*;
 
@@ -179,6 +180,15 @@ public class ExpenseGraphNodes {
         Map<String, Object> data = requireSuccess("validate_materials", result);
         boolean complete = Boolean.TRUE.equals(data.get("complete"));
 
+        if (complete) {
+            // 从 WAITING_MATERIAL 恢复后，材料一旦补齐就立即恢复业务 RUNNING 状态。
+            taskStateStore.update(
+                    taskId(state),
+                    "RUNNING",
+                    "materialCheck"
+            );
+        }
+
         return Map.of(
                 MATERIAL_RESULT, data,
                 MATERIAL_ROUTE, complete ? "READY" : "MISSING"
@@ -218,6 +228,7 @@ public class ExpenseGraphNodes {
         );
     }
 
+    @Transactional
     public Map<String, Object> humanApproval(OverAllState state) {
         long taskId = taskId(state);
         approvalService.request(taskId, "POLICY_EXCEPTION");
@@ -231,7 +242,20 @@ public class ExpenseGraphNodes {
 
     public Map<String, Object> policyApprovalDecision(OverAllState state) {
         boolean approved = booleanValue(state, POLICY_APPROVED);
-        return Map.of(POLICY_DECISION_ROUTE, approved ? "APPROVED" : "REJECTED");
+
+        if (approved) {
+            // 人工审批完成后立即离开 WAITING_APPROVAL，避免恢复扫描重复调度旧决定。
+            taskStateStore.update(
+                    taskId(state),
+                    "RUNNING",
+                    "policyApprovalDecision"
+            );
+        }
+
+        return Map.of(
+                POLICY_DECISION_ROUTE,
+                approved ? "APPROVED" : "REJECTED"
+        );
     }
 
     public Map<String, Object> generateReport(OverAllState state) {
@@ -253,6 +277,7 @@ public class ExpenseGraphNodes {
         return Map.of(REPORT_DRAFT, requireSuccess("build_expense_report_draft", result));
     }
 
+    @Transactional
     public Map<String, Object> submitApproval(OverAllState state) {
         long taskId = taskId(state);
         approvalService.request(taskId, "SUBMIT_REPORT");

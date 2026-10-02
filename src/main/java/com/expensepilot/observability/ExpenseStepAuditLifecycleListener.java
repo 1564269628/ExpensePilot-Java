@@ -3,6 +3,7 @@ package com.expensepilot.observability;
 import com.alibaba.cloud.ai.graph.GraphLifecycleListener;
 import com.alibaba.cloud.ai.graph.RunnableConfig;
 import com.expensepilot.domain.StepType;
+import com.expensepilot.graph.TaskStateStore;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -45,6 +46,7 @@ public class ExpenseStepAuditLifecycleListener
             );
 
     private final JdbcTemplate jdbcTemplate;
+    private final TaskStateStore taskStateStore;
 
     @Override
     public void before(
@@ -108,6 +110,8 @@ public class ExpenseStepAuditLifecycleListener
                 null,
                 null
         );
+
+        safeClearRetryCount(taskId);
     }
 
     @Override
@@ -223,6 +227,20 @@ public class ExpenseStepAuditLifecycleListener
                     stepType,
                     status,
                     auditFailure
+            );
+        }
+    }
+
+    private void safeClearRetryCount(long taskId) {
+        try {
+            taskStateStore.clearRetryCount(taskId);
+        }
+        catch (RuntimeException failure) {
+            // 审计/恢复预算维护不能反向破坏 Graph 主业务执行。
+            log.warn(
+                    "Failed to clear retry_count after successful step, taskId={}",
+                    taskId,
+                    failure
             );
         }
     }

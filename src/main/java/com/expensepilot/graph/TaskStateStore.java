@@ -35,6 +35,28 @@ public class TaskStateStore {
         return snapshot.version() + 1;
     }
 
+    /**
+     * 任一主路径节点成功都代表任务取得真实进展，连续失败计数应重新开始。
+     *
+     * <p>这里不改 version，因为并行查询节点可能同时成功；retry_count 只是恢复预算，
+     * 不是业务状态 CAS 的一部分。</p>
+     */
+    public void clearRetryCount(long taskId) {
+        int affected = jdbcTemplate.update("""
+                update expense_task
+                   set retry_count=0,
+                       last_error=null
+                 where id=?
+                   and retry_count<>0
+                """,
+                taskId
+        );
+
+        if (affected > 0) {
+            taskContextCache.evict(taskId);
+        }
+    }
+
     public void markError(long taskId, String node, Throwable error) {
         jdbcTemplate.update("""
                 update expense_task

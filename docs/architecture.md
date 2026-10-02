@@ -64,7 +64,11 @@ Checkpoint 使用 Spring AI Alibaba 自带 `MysqlSaver`，而不是业务代码�
 
 ## 4. 恢复阶梯
 
-恢复不是无限重试：
+恢复不是无限重试，而且 `retry_count` 表示“连续失败次数”：
+任一真实主路径 Graph 节点成功后，由 Step 生命周期监听器把它清零，因此早期一次故障
+不会永久消耗后续独立故障的恢复预算。
+
+恢复阶梯：
 
 1. Planner Structured Output 校验失败：反馈确定性错误，让模型有限次数重新生成；
 2. 查询类 MCP 瞬时失败：ToolGateway 有限指数退避；
@@ -104,7 +108,9 @@ Checkpoint 使用 Spring AI Alibaba 自带 `MysqlSaver`，而不是业务代码�
 - Graph：负责中断和恢复；
 - `approval_record`：负责保存人工事实。
 
-Graph 进入 `humanApproval` / `submitApproval` 时先创建 `PENDING` 审批记录。
+Graph 进入 `humanApproval` / `submitApproval` 时，在同一个 MySQL 事务里创建
+`PENDING` 审批记录并把任务状态更新为 `WAITING_APPROVAL`。如果其中一步失败，
+两者一起回滚，不会出现“审批记录已经存在但任务其实没有进入审批节点”的半状态。
 最终 `APPROVED/REJECTED` 使用条件更新 `where status='PENDING'`，所以两个审批人
 并发点击时只有一个决定能成功，后到请求不能覆盖前一个人的决定。
 
