@@ -211,7 +211,13 @@ public class ExpenseAgentService {
                 );
             }
             else {
-                execute(taskId, null, config(task.threadId()));
+                // Spring AI Alibaba Graph 1.1.2.2 明确要求 resume metadata；
+                // 否则只会复用持久化 state，却从 START 重新执行。
+                execute(
+                        taskId,
+                        null,
+                        config(task.threadId()).withResume()
+                );
             }
         });
     }
@@ -343,9 +349,14 @@ public class ExpenseAgentService {
                         null
                 );
 
+                // updateState 只写入 checkpoint state；真正从 checkpoint.nextNode
+                // 继续仍需要 withResume()，否则会从 START 重新进入 Planner。
+                RunnableConfig resumeConfig =
+                        updated.withResume();
+
                 expenseCompiledGraph.stream(
                         null,
-                        updated
+                        resumeConfig
                 ).blockLast();
             }
             catch (Throwable ex) {

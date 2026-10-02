@@ -34,7 +34,8 @@ Planner 主路径只到 `SUBMIT_REPORT`。提交成功后的通知不由 LLM 规
 - 多条从同一节点发出的边：邮箱 / 网盘 / 差旅并行 fan-out；
 - 多条边汇入 `materialJoin`：fan-in；
 - `interruptAfter`：澄清、补件、政策审批、最终提交审批；
-- `CompiledGraph.updateState`：人工输入写回 checkpoint 后恢复。
+- `CompiledGraph.updateState`：人工输入写回 checkpoint；
+- `RunnableConfig.withResume()`：让人工/机器恢复真正从 checkpoint 的 `nextNode` 继续。
 
 不存在第二套 `while/switch` 手写工作流 Runtime。
 
@@ -51,8 +52,9 @@ Checkpoint 使用 Spring AI Alibaba 自带 `MysqlSaver`，而不是业务代码�
 
 1. 每次 Graph 执行后，`MysqlSaver` 保存状态与下一执行位置；
 2. JVM / Pod 崩溃后，`RecoveryWorker` 扫描 MySQL 业务任务；
-3. 用同一个 `threadId` 调用 `CompiledGraph.stream(null, config)`；
-4. Graph 从最近 checkpoint 继续，而不是从头重跑。
+3. 用同一个 `threadId` 构造 `RunnableConfig`，并显式调用 `withResume()`；
+4. 再执行 `CompiledGraph.stream(null, resumeConfig)`；
+5. Graph 才会从最近 checkpoint 的 `nextNode` 继续，而不是只复用旧 state 后从 START 重跑。
 
 业务状态 `expense_task` 与 Graph checkpoint 职责不同：
 
