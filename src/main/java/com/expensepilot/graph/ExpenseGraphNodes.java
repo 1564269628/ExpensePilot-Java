@@ -1,6 +1,7 @@
 package com.expensepilot.graph;
 
 import com.alibaba.cloud.ai.graph.OverAllState;
+import com.expensepilot.agent.PlanAuditService;
 import com.expensepilot.agent.PlanOutput;
 import com.expensepilot.agent.Planner;
 import com.expensepilot.outbox.OutboxService;
@@ -26,6 +27,7 @@ import static com.expensepilot.graph.ExpenseGraphKeys.*;
 public class ExpenseGraphNodes {
 
     private final Planner planner;
+    private final PlanAuditService planAuditService;
     private final ToolGateway toolGateway;
     private final OutboxService outboxService;
     private final TaskStateStore taskStateStore;
@@ -37,6 +39,9 @@ public class ExpenseGraphNodes {
 
         String request = string(state, REQUEST_TEXT);
         PlanOutput output = planner.planOutput(request);
+
+        // Structured Output 通过确定性校验后，先写可查询的审计快照，再让 Graph 继续执行。
+        planAuditService.persist(taskId, output);
 
         Map<String, Object> planMap = objectMapper.convertValue(output, Map.class);
         Map<String, Object> values = new LinkedHashMap<>();

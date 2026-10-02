@@ -1,3 +1,7 @@
+-- ExpensePilot 业务事实表。
+-- Spring AI Alibaba Graph 的 checkpoint 表由 MysqlSaver(CREATE_IF_NOT_EXISTS) 自行创建，
+-- 不再维护第二套 agent_checkpoint 表，避免两个 Checkpoint 事实源。
+
 CREATE TABLE IF NOT EXISTS expense_task (
   id BIGINT PRIMARY KEY,
   user_id VARCHAR(64) NOT NULL,
@@ -14,39 +18,44 @@ CREATE TABLE IF NOT EXISTS expense_task (
   UNIQUE KEY uk_thread_id(thread_id)
 );
 
+CREATE TABLE IF NOT EXISTS agent_plan (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  task_id BIGINT NOT NULL,
+  goal VARCHAR(1000),
+  trip_scope_json JSON NOT NULL,
+  needs_clarification BOOLEAN NOT NULL DEFAULT FALSE,
+  clarification_questions_json JSON NOT NULL,
+  plan_summary TEXT,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_agent_plan_task(task_id)
+);
+
 CREATE TABLE IF NOT EXISTS agent_step (
-  id BIGINT PRIMARY KEY,
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
   task_id BIGINT NOT NULL,
   step_key VARCHAR(128) NOT NULL,
   step_type VARCHAR(64) NOT NULL,
   status VARCHAR(32) NOT NULL,
-  depends_on_json JSON,
-  input_json JSON,
+  depends_on_json JSON NOT NULL,
+  input_json JSON NOT NULL,
   output_json JSON,
   error_code VARCHAR(64),
   error_message TEXT,
   retry_count INT NOT NULL DEFAULT 0,
   started_at DATETIME,
   finished_at DATETIME,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   UNIQUE KEY uk_task_step(task_id, step_key),
   KEY idx_task_status(task_id, status)
-);
-
-CREATE TABLE IF NOT EXISTS agent_checkpoint (
-  id BIGINT PRIMARY KEY AUTO_INCREMENT,
-  task_id BIGINT NOT NULL,
-  checkpoint_no BIGINT NOT NULL,
-  node_name VARCHAR(64) NOT NULL,
-  state_json JSON NOT NULL,
-  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  UNIQUE KEY uk_task_checkpoint(task_id, checkpoint_no)
 );
 
 CREATE TABLE IF NOT EXISTS tool_execution_record (
   id BIGINT PRIMARY KEY AUTO_INCREMENT,
   task_id BIGINT NOT NULL,
   tool_name VARCHAR(128) NOT NULL,
-  operation_type VARCHAR(64) NOT NULL,
+  operation_type VARCHAR(128) NOT NULL,
   idempotency_key VARCHAR(190) NOT NULL,
   request_id VARCHAR(128),
   external_business_no VARCHAR(128),
@@ -57,7 +66,8 @@ CREATE TABLE IF NOT EXISTS tool_execution_record (
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   UNIQUE KEY uk_idempotency(idempotency_key),
-  KEY idx_request_id(request_id)
+  KEY idx_request_id(request_id),
+  KEY idx_tool_task(task_id, tool_name)
 );
 
 CREATE TABLE IF NOT EXISTS outbox_event (
@@ -76,11 +86,11 @@ CREATE TABLE IF NOT EXISTS outbox_event (
 );
 
 CREATE TABLE IF NOT EXISTS consumed_event (
-  event_id VARCHAR(128) PRIMARY KEY,
+  event_id VARCHAR(128) NOT NULL,
   consumer_group VARCHAR(128) NOT NULL,
-  consumed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+  consumed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY(event_id, consumer_group)
 );
-
 
 CREATE TABLE IF NOT EXISTS approval_record (
   id BIGINT PRIMARY KEY AUTO_INCREMENT,
