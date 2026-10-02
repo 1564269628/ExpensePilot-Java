@@ -38,6 +38,11 @@ Planner 主路径只到 `SUBMIT_REPORT`。提交成功后的通知不由 LLM 规
 
 不存在第二套 `while/switch` 手写工作流 Runtime。
 
+`ExpenseStepAuditLifecycleListener` 直接挂在同一个 `CompileConfig` 上，根据
+Graph 的 `NODE_BEFORE / NODE_AFTER / ERROR` 生命周期，把当前 Planner 主路径的
+`agent_step` 自动更新为 `RUNNING / SUCCEEDED / FAILED`。因此 step 审计状态
+来自真实 Graph 执行，而不是另一套手工状态机。
+
 ## 3. Checkpoint 与故障恢复
 
 Checkpoint 使用 Spring AI Alibaba 自带 `MysqlSaver`，而不是业务代码自建快照表。

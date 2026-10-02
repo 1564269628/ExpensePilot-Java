@@ -10,6 +10,7 @@ import com.alibaba.cloud.ai.graph.observation.GraphObservationLifecycleListener;
 import com.alibaba.cloud.ai.graph.state.strategy.ReplaceStrategy;
 import io.micrometer.observation.ObservationRegistry;
 import com.expensepilot.graph.ExpenseGraphNodes;
+import com.expensepilot.observability.ExpenseStepAuditLifecycleListener;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -185,7 +186,8 @@ public class ExpenseGraphConfig {
     public CompileConfig expenseCompileConfig(
             MysqlSaver expenseMysqlSaver,
             ObservationRegistry observationRegistry,
-            GraphObservationLifecycleListener observationLifecycleListener) {
+            GraphObservationLifecycleListener observationLifecycleListener,
+            ExpenseStepAuditLifecycleListener stepAuditLifecycleListener) {
 
         SaverConfig saverConfig = SaverConfig.builder()
                 .register(expenseMysqlSaver)
@@ -196,6 +198,9 @@ public class ExpenseGraphConfig {
                 .observationRegistry(observationRegistry)
                 .withLifecycleListener(
                         observationLifecycleListener
+                )
+                .withLifecycleListener(
+                        stepAuditLifecycleListener
                 )
                 // 节点先把 WAITING_* 状态落业务表，然后 Graph 保存 checkpoint 并暂停。
                 .interruptAfter(
