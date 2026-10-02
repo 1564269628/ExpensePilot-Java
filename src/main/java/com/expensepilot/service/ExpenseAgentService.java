@@ -211,13 +211,33 @@ public class ExpenseAgentService {
                 );
             }
             else {
-                // Spring AI Alibaba Graph 1.1.2.2 明确要求 resume metadata；
-                // 否则只会复用持久化 state，却从 START 重新执行。
-                execute(
-                        taskId,
-                        null,
-                        config(task.threadId()).withResume()
-                );
+                RunnableConfig baseConfig =
+                        config(task.threadId());
+
+                if (expenseCompiledGraph
+                        .lastStateOf(baseConfig)
+                        .isPresent()) {
+
+                    // 已经有 checkpoint：显式 withResume()，从 checkpoint.nextNode 继续。
+                    execute(
+                            taskId,
+                            null,
+                            baseConfig.withResume()
+                    );
+                }
+                else {
+                    // 可能在 Planner/首节点第一次 checkpoint 之前就失败。
+                    // 这时不存在可恢复位置，只能用 MySQL 原始业务事实重建初始 state。
+                    execute(
+                            taskId,
+                            initialState(
+                                    taskId,
+                                    task.userId(),
+                                    task.requestText()
+                            ),
+                            baseConfig
+                    );
+                }
             }
         });
     }

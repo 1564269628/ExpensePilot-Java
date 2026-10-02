@@ -52,9 +52,10 @@ Checkpoint 使用 Spring AI Alibaba 自带 `MysqlSaver`，而不是业务代码�
 
 1. 每次 Graph 执行后，`MysqlSaver` 保存状态与下一执行位置；
 2. JVM / Pod 崩溃后，`RecoveryWorker` 扫描 MySQL 业务任务；
-3. 用同一个 `threadId` 构造 `RunnableConfig`，并显式调用 `withResume()`；
-4. 再执行 `CompiledGraph.stream(null, resumeConfig)`；
-5. Graph 才会从最近 checkpoint 的 `nextNode` 继续，而不是只复用旧 state 后从 START 重跑。
+3. 用同一个 `threadId` 构造 `RunnableConfig`；
+4. 先通过 `CompiledGraph.lastStateOf(config)` 判断这个 thread 是否真的已有 checkpoint；
+5. 有 checkpoint：调用 `withResume()` 后执行 `stream(null, resumeConfig)`，从最近 checkpoint 的 `nextNode` 继续；
+6. 没有 checkpoint：说明可能在 Planner/首节点首次 checkpoint 前失败，此时从 MySQL 的 `user_id + request_text` 重建初始 state，从 START 正常重跑，而不是对空 state 做 resume。
 
 业务状态 `expense_task` 与 Graph checkpoint 职责不同：
 
