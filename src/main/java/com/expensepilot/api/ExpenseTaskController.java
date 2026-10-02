@@ -24,13 +24,15 @@ public class ExpenseTaskController {
 
     @PostMapping
     public ResponseEntity<Map<String, Object>> create(
+            @RequestHeader("Idempotency-Key") String idempotencyKey,
             @Valid @RequestBody CreateExpenseRequest request) {
 
         String userId = currentUser.userId();
 
         long taskId = expenseAgentService.start(
                 userId,
-                request.requestText()
+                request.requestText(),
+                idempotencyKey
         );
 
         return ResponseEntity.accepted().body(Map.of(

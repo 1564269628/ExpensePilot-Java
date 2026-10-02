@@ -7,8 +7,13 @@ import com.expensepilot.graph.TaskStateStore;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.core.task.TaskRejectedException;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -45,24 +50,149 @@ public class ExpenseAgentService {
         this.graphExecutor = graphExecutor;
     }
 
-    public long start(String userId, String requestText) {
-        long taskId = positiveId();
-        String threadId = "expense-" + taskId;
+    /**
+     * 创建任务使用 API Idempotency-Key 做请求级幂等。
+     *
+     * <p>只保存 key 的 SHA-256，不把客户端原始 token 写入数据库。
+     * 同一用户重复提交同一个 key 返回原 taskId；同 key 换请求内容则拒绝。</p>
+     */
+    public long start(
+            String userId,
+            String requestText,
+            String clientRequestId) {
 
-        jdbcTemplate.update("""
-                insert into expense_task
-                (id,user_id,request_text,status,thread_id,retry_count,version)
-                values (?,?,?,'CREATED',?,0,0)
-                """, taskId, userId, requestText, threadId);
+        String requestHash =
+                clientRequestHash(clientRequestId);
 
-        scheduleRecoverable(() -> execute(
-                taskId,
-                initialState(taskId, userId, requestText),
-                config(threadId)
-        ));
+        // 极小概率的随机 BIGINT 主键碰撞可以重新生成；
+        // 真正的 API 重试则会命中 user_id + client_request_hash 唯一索引。
+        for (int attempt = 0; attempt < 3; attempt++) {
+            long taskId = positiveId();
+            String threadId = "expense-" + taskId;
 
-        return taskId;
+            try {
+                jdbcTemplate.update("""
+                        insert into expense_task(
+                            id,
+                            user_id,
+                            client_request_hash,
+                            request_text,
+                            status,
+                            thread_id,
+                            retry_count,
+                            version
+                        )
+                        values (
+                            ?,?,?,
+                            ?,
+                            'CREATED',
+                            ?,
+                            0,
+                            0
+                        )
+                        """,
+                        taskId,
+                        userId,
+                        requestHash,
+                        requestText,
+                        threadId
+                );
+
+                scheduleRecoverable(() -> execute(
+                        taskId,
+                        initialState(
+                                taskId,
+                                userId,
+                                requestText
+                        ),
+                        config(threadId)
+                ));
+
+                return taskId;
+            }
+            catch (DuplicateKeyException duplicate) {
+                ExistingCreate existing =
+                        findExistingCreate(
+                                userId,
+                                requestHash
+                        );
+
+                if (existing != null) {
+                    if (!existing.requestText()
+                            .equals(requestText)) {
+                        throw new IllegalStateException(
+                                "同一个 Idempotency-Key 不能复用于不同 requestText");
+                    }
+
+                    return existing.taskId();
+                }
+
+                // 没查到 requestHash，说明更可能是随机 taskId 主键碰撞，继续生成。
+            }
+        }
+
+        throw new IllegalStateException(
+                "任务 ID 连续冲突，无法创建报销任务");
     }
+
+    private ExistingCreate findExistingCreate(
+            String userId,
+            String requestHash) {
+
+        return jdbcTemplate.query("""
+                select id, request_text
+                  from expense_task
+                 where user_id=?
+                   and client_request_hash=?
+                """,
+                (rs, i) -> new ExistingCreate(
+                        rs.getLong("id"),
+                        rs.getString("request_text")
+                ),
+                userId,
+                requestHash
+        ).stream().findFirst().orElse(null);
+    }
+
+    private String clientRequestHash(
+            String clientRequestId) {
+
+        if (clientRequestId == null) {
+            throw new IllegalArgumentException(
+                    "Idempotency-Key 不能为空");
+        }
+
+        String normalized = clientRequestId.trim();
+        if (normalized.length() < 8
+                || normalized.length() > 256) {
+            throw new IllegalArgumentException(
+                    "Idempotency-Key 长度必须在 8~256 之间");
+        }
+
+        try {
+            MessageDigest digest =
+                    MessageDigest.getInstance("SHA-256");
+
+            return HexFormat.of().formatHex(
+                    digest.digest(
+                            normalized.getBytes(
+                                    StandardCharsets.UTF_8
+                            )
+                    )
+            );
+        }
+        catch (NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException(
+                    "JVM 不支持 SHA-256",
+                    impossible
+            );
+        }
+    }
+
+    private record ExistingCreate(
+            long taskId,
+            String requestText
+    ) {}
 
     public void resume(long taskId) {
         TaskStateStore.TaskSnapshot task = taskStateStore.require(taskId);

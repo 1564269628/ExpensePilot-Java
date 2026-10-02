@@ -82,6 +82,10 @@ JWT subject，并要求 `SCOPE_expense.approve`。
 
 因此 Graph State 中的用户身份来自受信任 IdP，而不是可伪造的请求参数。
 
+创建任务还要求 HTTP `Idempotency-Key`。服务端只保存其 SHA-256 哈希，并对
+`(user_id, client_request_hash)` 建唯一索引：客户端因超时重试创建请求时返回原
+`taskId`，不会生成两条报销流程；如果同一个 key 被复用于不同请求内容则返回冲突。
+
 ## 生产 MCP
 
 四个真实 MCP Server 使用 Streamable HTTP：
@@ -104,6 +108,7 @@ JWT subject，并要求 `SCOPE_expense.approve`。
 | 流程如何驱动 | Spring AI Alibaba StateGraph / CompiledGraph |
 | 三路材料怎么提速 | Graph fan-out/fan-in + 独立有界线程池 |
 | 外部系统怎么接 | Spring AI MCP Streamable HTTP |
+| 创建请求重复怎么办 | HTTP Idempotency-Key + user/request 唯一索引 |
 | 提交重复怎么办 | 幂等键 + DB 唯一索引 + requestId |
 | 提交超时但外部已成功 | UNKNOWN + query_expense_submission |
 | JVM 崩溃怎么续跑 | Graph MysqlSaver + RecoveryWorker |
