@@ -6,6 +6,7 @@ import org.springframework.ai.mcp.SyncMcpToolCallbackProvider;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.tool.definition.ToolDefinition;
 
+import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -26,14 +27,18 @@ class SpringAiMcpExpenseClientTest {
 
         when(definition.name()).thenReturn("search_email");
         when(callback.getToolDefinition()).thenReturn(definition);
-        when(callback.call(anyString())).thenReturn("""
-                [
-                  {
-                    "type": "text",
-                    "text": "{\"success\":true,\"code\":\"OK\",\"message\":\"success\",\"data\":{\"messages\":[{\"messageId\":\"m1\"}]},\"externalBusinessNo\":null}"
-                  }
-                ]
-                """);
+        when(callback.call(anyString())).thenReturn(
+                mcpTextEnvelope(Map.of(
+                        "success", true,
+                        "code", "OK",
+                        "message", "success",
+                        "data", Map.of(
+                                "messages",
+                                List.of(Map.of("messageId", "m1"))
+                        ),
+                        "externalBusinessNo", null
+                ))
+        );
         when(provider.getToolCallbacks())
                 .thenReturn(new ToolCallback[] { callback });
 
@@ -64,14 +69,15 @@ class SpringAiMcpExpenseClientTest {
         when(definition.name())
                 .thenReturn("query_expense_submission");
         when(callback.getToolDefinition()).thenReturn(definition);
-        when(callback.call(anyString())).thenReturn("""
-                [
-                  {
-                    "type": "text",
-                    "text": "{\"success\":true,\"code\":\"OK\",\"message\":\"found\",\"data\":{\"status\":\"SUBMITTED\"},\"externalBusinessNo\":\"EXP-001\"}"
-                  }
-                ]
-                """);
+        when(callback.call(anyString())).thenReturn(
+                mcpTextEnvelope(Map.of(
+                        "success", true,
+                        "code", "OK",
+                        "message", "found",
+                        "data", Map.of("status", "SUBMITTED"),
+                        "externalBusinessNo", "EXP-001"
+                ))
+        );
         when(provider.getToolCallbacks())
                 .thenReturn(new ToolCallback[] { callback });
 
@@ -100,18 +106,18 @@ class SpringAiMcpExpenseClientTest {
 
         when(definition.name()).thenReturn("search_email");
         when(callback.getToolDefinition()).thenReturn(definition);
-        when(callback.call(anyString())).thenReturn("""
-                [
-                  {
-                    "type": "text",
-                    "text": "正在查询企业邮箱"
-                  },
-                  {
-                    "type": "text",
-                    "text": "{\"success\":true,\"code\":\"OK\",\"message\":\"success\",\"data\":{},\"externalBusinessNo\":null}"
-                  }
-                ]
-                """);
+        when(callback.call(anyString())).thenReturn(
+                mcpContentEnvelope(
+                        "正在查询企业邮箱",
+                        Map.of(
+                                "success", true,
+                                "code", "OK",
+                                "message", "success",
+                                "data", Map.of(),
+                                "externalBusinessNo", null
+                        )
+                )
+        );
         when(provider.getToolCallbacks())
                 .thenReturn(new ToolCallback[] { callback });
 
@@ -139,14 +145,14 @@ class SpringAiMcpExpenseClientTest {
 
         when(definition.name()).thenReturn("search_email");
         when(callback.getToolDefinition()).thenReturn(definition);
-        when(callback.call(anyString())).thenReturn("""
-                [
-                  {
-                    "type": "text",
-                    "text": "{\"success\":\"yes\",\"code\":\"OK\",\"message\":\"bad schema\",\"data\":{}}"
-                  }
-                ]
-                """);
+        when(callback.call(anyString())).thenReturn(
+                mcpTextEnvelope(Map.of(
+                        "success", "yes",
+                        "code", "OK",
+                        "message", "bad schema",
+                        "data", Map.of()
+                ))
+        );
         when(provider.getToolCallbacks())
                 .thenReturn(new ToolCallback[] { callback });
 
@@ -165,5 +171,41 @@ class SpringAiMcpExpenseClientTest {
                 )
         );
     }
+    private String mcpTextEnvelope(
+            Map<String, Object> businessPayload) {
+        return mcpContentEnvelope(null, businessPayload);
+    }
+
+    private String mcpContentEnvelope(
+            String leadingText,
+            Map<String, Object> businessPayload) {
+        try {
+            ObjectMapper mapper = new ObjectMapper();
+            List<Map<String, Object>> content = new java.util.ArrayList<>();
+
+            if (leadingText != null) {
+                content.add(Map.of(
+                        "type", "text",
+                        "text", leadingText
+                ));
+            }
+
+            content.add(Map.of(
+                    "type", "text",
+                    "text", mapper.writeValueAsString(
+                            businessPayload
+                    )
+            ));
+
+            return mapper.writeValueAsString(content);
+        }
+        catch (Exception ex) {
+            throw new IllegalStateException(
+                    "构造测试 MCP envelope 失败",
+                    ex
+            );
+        }
+    }
+
 
 }
