@@ -18,6 +18,13 @@ spring:
     locations: classpath:db/migration
     validate-on-migrate: true
     baseline-on-migrate: false
+
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${JWT_ISSUER_URI}
+
   ai:
     openai:
       api-key: ${OPENAI_API_KEY}

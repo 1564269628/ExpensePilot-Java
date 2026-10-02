@@ -1,6 +1,8 @@
 package com.expensepilot.api;
 
 import com.expensepilot.cache.TaskStatusView;
+import com.expensepilot.security.CurrentUser;
+import com.expensepilot.security.TaskAuthorizationService;
 import com.expensepilot.service.ExpenseAgentService;
 import com.expensepilot.service.ExpenseTaskQueryService;
 import jakarta.validation.Valid;
@@ -17,14 +19,20 @@ public class ExpenseTaskController {
 
     private final ExpenseAgentService expenseAgentService;
     private final ExpenseTaskQueryService expenseTaskQueryService;
+    private final CurrentUser currentUser;
+    private final TaskAuthorizationService taskAuthorizationService;
 
     @PostMapping
     public ResponseEntity<Map<String, Object>> create(
             @Valid @RequestBody CreateExpenseRequest request) {
+
+        String userId = currentUser.userId();
+
         long taskId = expenseAgentService.start(
-                request.userId(),
+                userId,
                 request.requestText()
         );
+
         return ResponseEntity.accepted().body(Map.of(
                 "taskId", taskId,
                 "message", "任务已进入 Spring AI Alibaba Graph 工作流"
@@ -34,19 +42,28 @@ public class ExpenseTaskController {
     @GetMapping("/{taskId}")
     public ResponseEntity<TaskStatusView> get(
             @PathVariable long taskId) {
+
+        taskAuthorizationService.assertOwner(
+                taskId,
+                currentUser.userId()
+        );
+
         return ResponseEntity.ok(
                 expenseTaskQueryService.get(taskId)
         );
     }
 
-    /**
-     * 仅用于故障恢复，不用于跳过 Human-in-the-loop。
-     * WAITING_* 状态调用这里会返回 409。
-     */
     @PostMapping("/{taskId}/resume")
     public ResponseEntity<Map<String, Object>> resume(
             @PathVariable long taskId) {
+
+        taskAuthorizationService.assertOwner(
+                taskId,
+                currentUser.userId()
+        );
+
         expenseAgentService.resume(taskId);
+
         return ResponseEntity.accepted().body(Map.of(
                 "taskId", taskId,
                 "message", "故障恢复请求已提交"

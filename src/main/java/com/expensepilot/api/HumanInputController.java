@@ -1,5 +1,7 @@
 package com.expensepilot.api;
 
+import com.expensepilot.security.CurrentUser;
+import com.expensepilot.security.TaskAuthorizationService;
 import com.expensepilot.service.ExpenseAgentService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -15,11 +17,15 @@ import java.util.Map;
 public class HumanInputController {
 
     private final ExpenseAgentService expenseAgentService;
+    private final CurrentUser currentUser;
+    private final TaskAuthorizationService taskAuthorizationService;
 
     @PostMapping("/clarification")
     public ResponseEntity<Map<String, Object>> clarification(
             @PathVariable long taskId,
             @Valid @RequestBody ClarificationInput input) {
+
+        assertOwner(taskId);
 
         expenseAgentService.resumeClarification(taskId, Map.of(
                 "tripStart", input.startDate().toString(),
@@ -38,6 +44,8 @@ public class HumanInputController {
             @PathVariable long taskId,
             @Valid @RequestBody SupplementRequest input) {
 
+        assertOwner(taskId);
+
         expenseAgentService.resumeSupplement(taskId, Map.of(
                 "supplementalMaterials", input.materialRefs()
         ));
@@ -46,5 +54,12 @@ public class HumanInputController {
                 "taskId", taskId,
                 "message", "补充材料引用已写入 Graph State，重新进行材料核验"
         ));
+    }
+
+    private void assertOwner(long taskId) {
+        taskAuthorizationService.assertOwner(
+                taskId,
+                currentUser.userId()
+        );
     }
 }

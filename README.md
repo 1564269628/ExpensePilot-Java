@@ -8,6 +8,7 @@
 
 ```text
 HTTP API
+  -> JWT Resource Server / task data authorization
   -> Spring AI Structured Output Planner
   -> PlanOutput / Task DAG 强类型校验
   -> Spring AI Alibaba StateGraph
@@ -72,6 +73,15 @@ Planner 只规划到 `SUBMIT_REPORT`。通知不交给 LLM 规划；报销提交
 
 不存在第二套手写 Executor 工作流。
 
+## 身份与数据权限
+
+所有 `/api/**` 请求使用 Spring Security OAuth2 Resource Server 校验 JWT。
+任务创建时的 `userId` 只取 token `sub`，请求体不能指定其他用户；查询、故障恢复、
+澄清和补件都校验任务 owner。审批接口不接受客户端传入 approver，而是记录当前
+JWT subject，并要求 `SCOPE_expense.approve` 或 `ROLE_EXPENSE_APPROVER`。
+
+因此 Graph State 中的用户身份来自受信任 IdP，而不是可伪造的请求参数。
+
 ## 生产 MCP
 
 四个真实 MCP Server 使用 Streamable HTTP：
@@ -109,6 +119,7 @@ Planner 只规划到 `SUBMIT_REPORT`。通知不交给 LLM 规划；报销提交
 复制 `.env.example` 的变量到部署平台 Secret/环境变量中。至少需要：
 
 - `OPENAI_API_KEY / OPENAI_MODEL`
+- `JWT_ISSUER_URI`
 - MySQL / Redis / RocketMQ
 - 四个 `*_MCP_URL`
 - 对应 MCP Token 或基础设施级 mTLS/Service Mesh 身份
