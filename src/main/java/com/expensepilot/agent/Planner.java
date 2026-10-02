@@ -88,16 +88,24 @@ public class Planner {
 
                 规则：
                 1. 只能使用后端提供的 StepType 枚举，不得创造新的 stepType。
-                2. 查询邮箱、网盘、差旅互不依赖，应在 DAG 中并行。
-                3. PARSE_INVOICE 依赖材料查询；CHECK_MATERIAL 依赖解析和差旅结果；
-                   CHECK_POLICY 依赖材料检查；GENERATE_REPORT 依赖政策检查；
-                   SUBMIT_REPORT 依赖生成报销单；SEND_NOTIFICATION 依赖提交结果。
-                4. SUBMIT_REPORT、SEND_NOTIFICATION 必须 sideEffect=true；其他步骤必须 false。
-                5. 不得根据常识编造发票、金额、订单号、审批结果或企业政策。
-                6. 日期表达如“上周”需要结合我提供的当前业务日期计算。
-                7. 若城市/日期等关键字段无法从原文安全确定，在 TripScope.unknownFields 中标记，
+                2. 你只生成“主路径 Task DAG”。REQUEST_SUPPLEMENT 与 HUMAN_APPROVAL
+                   是 Graph Runtime 的条件分支，禁止出现在 tasks 中。
+                3. 生产 Graph 的直接依赖必须严格如下：
+                   RESOLVE_TRIP_RANGE -> 无依赖；
+                   SEARCH_EMAIL / SEARCH_DRIVE / QUERY_TRAVEL -> RESOLVE_TRIP_RANGE；
+                   PARSE_INVOICE -> SEARCH_EMAIL + SEARCH_DRIVE + QUERY_TRAVEL；
+                   CHECK_MATERIAL -> PARSE_INVOICE；
+                   CHECK_POLICY -> CHECK_MATERIAL；
+                   GENERATE_REPORT -> CHECK_POLICY；
+                   SUBMIT_REPORT -> GENERATE_REPORT；
+                   SEND_NOTIFICATION -> SUBMIT_REPORT。
+                4. 查询邮箱、网盘、差旅三个节点应共享同一个前置节点，从而由 Graph 并行执行。
+                5. SUBMIT_REPORT、SEND_NOTIFICATION 必须 sideEffect=true；其他步骤必须 false。
+                6. 不得根据常识编造发票、金额、订单号、审批结果或企业政策。
+                7. 日期表达如“上周”需要结合我提供的当前业务日期计算。
+                8. 若城市/日期等关键字段无法从原文安全确定，在 TripScope.unknownFields 中标记，
                    needsClarification=true，并生成 clarificationQuestions。
-                8. planSummary 只输出简短可审计说明，不输出隐含推理过程。
+                9. planSummary 只输出简短可审计说明，不输出隐含推理过程。
                 """;
     }
 
