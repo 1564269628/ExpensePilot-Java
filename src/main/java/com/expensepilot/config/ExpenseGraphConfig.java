@@ -6,7 +6,9 @@ import com.alibaba.cloud.ai.graph.checkpoint.config.SaverConfig;
 import com.alibaba.cloud.ai.graph.checkpoint.savers.mysql.CreateOption;
 import com.alibaba.cloud.ai.graph.checkpoint.savers.mysql.MysqlSaver;
 import com.alibaba.cloud.ai.graph.exception.GraphStateException;
+import com.alibaba.cloud.ai.graph.observation.GraphObservationLifecycleListener;
 import com.alibaba.cloud.ai.graph.state.strategy.ReplaceStrategy;
+import io.micrometer.observation.ObservationRegistry;
 import com.expensepilot.graph.ExpenseGraphNodes;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
@@ -172,18 +174,30 @@ public class ExpenseGraphConfig {
         return graph;
     }
 
+    /**
+     * 主 Graph 唯一使用的 CompileConfig。
+     *
+     * <p>显式注入 ObservationRegistry 与 GraphObservationLifecycleListener。
+     * 这样 spring-ai-alibaba-starter-graph-observation 产生的监听器真正挂到
+     * ExpensePilot 的 CompiledGraph，而不是只创建一个未被使用的默认配置 Bean。</p>
+     */
     @Bean
-    public CompiledGraph expenseCompiledGraph(
-            StateGraph expenseStateGraph,
-            MysqlSaver expenseMysqlSaver) throws GraphStateException {
+    public CompileConfig expenseCompileConfig(
+            MysqlSaver expenseMysqlSaver,
+            ObservationRegistry observationRegistry,
+            GraphObservationLifecycleListener observationLifecycleListener) {
 
         SaverConfig saverConfig = SaverConfig.builder()
                 .register(expenseMysqlSaver)
                 .build();
 
-        CompileConfig compileConfig = CompileConfig.builder()
+        return CompileConfig.builder()
                 .saverConfig(saverConfig)
-                // 节点先把 WAITING_* 状态落业务表，然后 Graph 自动保存 checkpoint 并暂停。
+                .observationRegistry(observationRegistry)
+                .withLifecycleListener(
+                        observationLifecycleListener
+                )
+                // 节点先把 WAITING_* 状态落业务表，然后 Graph 保存 checkpoint 并暂停。
                 .interruptAfter(
                         "requestClarification",
                         "requestSupplement",
@@ -191,7 +205,16 @@ public class ExpenseGraphConfig {
                         "submitApproval"
                 )
                 .build();
+    }
 
-        return expenseStateGraph.compile(compileConfig);
+    @Bean
+    public CompiledGraph expenseCompiledGraph(
+            StateGraph expenseStateGraph,
+            CompileConfig expenseCompileConfig)
+            throws GraphStateException {
+
+        return expenseStateGraph.compile(
+                expenseCompileConfig
+        );
     }
 }

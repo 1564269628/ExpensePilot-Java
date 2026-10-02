@@ -159,5 +159,10 @@ GET task
 
 状态迁移会主动失效缓存，Redis 故障时直接回退 MySQL。
 
-Graph 使用 Spring AI Alibaba Graph Observation，MCP ToolGateway 通过 Micrometer
-Observation 建立 Tool span，最终由 OpenTelemetry/OTLP 输出。
+Graph 的主 `CompileConfig` 显式注入 `ObservationRegistry` 与
+`GraphObservationLifecycleListener`，因此 Graph / Node / Edge Observation
+真正挂在当前 `CompiledGraph` 上；不是只依赖 Starter 创建一个未使用的默认 Bean。
+
+MCP `ToolGateway` 通过 Micrometer `Observation` 建立 Tool span，Spring AI
+ChatModel 自身也使用 Micrometer Observation。最终统一由 OpenTelemetry/OTLP 输出，
+可以把 Planner/LLM、Graph 节点、MCP Tool、恢复执行串到同一可观测体系中。
