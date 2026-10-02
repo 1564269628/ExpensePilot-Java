@@ -17,7 +17,7 @@ spring:
 
   ai:
     openai:
-      # 生产环境必须显式传入真实凭证，不再使用 demo key。
+      # 生产环境必须显式传入真实模型凭证，不提供 demo key。
       api-key: ${OPENAI_API_KEY}
       base-url: ${OPENAI_BASE_URL:https://api.openai.com}
       chat:
@@ -25,8 +25,9 @@ spring:
           model: ${OPENAI_MODEL}
           temperature: 0.1
 
-    # 真实生产 MCP：四个远程 Server 通过 Streamable HTTP 接入。
-    # 每个 MCP Server 负责封装对应企业系统的 OAuth/RPC/SDK/内部网关。
+    # MCP Client 生命周期、初始化、ToolCallback 仍交给 Spring AI Starter；
+    # transport 则由 ProductionMcpTransportConfig 按 server 单独创建，
+    # 从而可以为邮箱/网盘/差旅/报销分别注入不同认证头。
     mcp:
       client:
         enabled: true
@@ -37,20 +38,6 @@ spring:
         request-timeout: 10s
         toolcallback:
           enabled: true
-        streamable-http:
-          connections:
-            email:
-              url: ${EMAIL_MCP_URL}
-              endpoint: ${EMAIL_MCP_ENDPOINT:/mcp}
-            drive:
-              url: ${DRIVE_MCP_URL}
-              endpoint: ${DRIVE_MCP_ENDPOINT:/mcp}
-            travel:
-              url: ${TRAVEL_MCP_URL}
-              endpoint: ${TRAVEL_MCP_ENDPOINT:/mcp}
-            expense:
-              url: ${EXPENSE_MCP_URL}
-              endpoint: ${EXPENSE_MCP_ENDPOINT:/mcp}
 
 expensepilot:
   planner:
@@ -77,6 +64,27 @@ expensepilot:
       core: 8
       max: 16
       queue: 100
+
+  # 真实生产 MCP Server。
+  # bearer-token 可为空：为空时意味着鉴权在 mTLS / service mesh / 内网网关完成。
+  mcp:
+    servers:
+      email:
+        url: ${EMAIL_MCP_URL}
+        endpoint: ${EMAIL_MCP_ENDPOINT:/mcp}
+        bearer-token: ${EMAIL_MCP_TOKEN:}
+      drive:
+        url: ${DRIVE_MCP_URL}
+        endpoint: ${DRIVE_MCP_ENDPOINT:/mcp}
+        bearer-token: ${DRIVE_MCP_TOKEN:}
+      travel:
+        url: ${TRAVEL_MCP_URL}
+        endpoint: ${TRAVEL_MCP_ENDPOINT:/mcp}
+        bearer-token: ${TRAVEL_MCP_TOKEN:}
+      expense:
+        url: ${EXPENSE_MCP_URL}
+        endpoint: ${EXPENSE_MCP_ENDPOINT:/mcp}
+        bearer-token: ${EXPENSE_MCP_TOKEN:}
 
 management:
   tracing:

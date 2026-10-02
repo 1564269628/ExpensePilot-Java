@@ -1,47 +1,129 @@
 # ExpensePilot-Java
 
-企业费用报销自主执行 Agent（Java / Spring Boot / Spring AI Alibaba Graph）。
+企业费用报销自主执行 Agent，基于 **Spring Boot + Spring AI Structured Output + Spring AI Alibaba Graph + MCP** 构建。
 
-## 项目主线
+## 当前实现不是 Demo Runtime
 
-ExpensePilot 不是“让大模型填报销单”，而是把 LLM 的理解、规划与决策能力接到可靠的 Java 分布式后端执行体系中。一次报销可能持续几十个步骤，并调用邮箱、网盘、差旅、政策库和报销系统，因此工程重点是：可靠执行、幂等、一致性、故障恢复和可观测。
+主链已经移除 Mock MCP、手写工作流 Runtime 和自建 Checkpoint。当前生产链路是：
 
 ```text
-用户请求
-  -> Planner
-  -> Task DAG
-  -> 并发材料获取（邮件 / 网盘 / 差旅）
-  -> 发票解析 / 材料完整性检查
-  -> 政策核验
-  -> 缺材料 ? 补件 : 审批
-  -> 生成报销单
-  -> 幂等提交
-  -> Outbox
-  -> RocketMQ
-  -> 通知 / 审计
+HTTP API
+  -> Spring AI Structured Output Planner
+  -> PlanOutput / Task DAG 强类型校验
+  -> Spring AI Alibaba StateGraph
+       -> emailSearch ┐
+       -> driveSearch ├─ 并行 fan-out / fan-in
+       -> travelQuery ┘
+       -> parseInvoices
+       -> materialCheck
+            -> 缺件 -> Graph interruptAfter -> 用户补件 -> resume
+       -> policyCheck
+            -> 冲突 -> Graph interruptAfter -> 人工审批 -> resume
+       -> generateReport
+       -> submitApproval
+            -> Graph interruptAfter -> 最终提交审批 -> resume
+       -> submitExpenseReport
+            -> idempotencyKey / requestId / UNKNOWN reconciliation
+       -> Transactional Outbox
+       -> RocketMQ
+       -> production notification MCP
 ```
 
-## 简历能力到代码的映射
+Graph Checkpoint 使用 Spring AI Alibaba 自带 **MysqlSaver**；业务状态以
+`expense_task` 为事实源。多实例通过 Redisson watchdog 锁协调，并使用 MySQL
+`version` CAS 防止并发状态覆盖。
 
-| 简历能力 | 主要实现 |
+## Structured Output
+
+`Planner` 使用：
+
+```java
+chatClient.prompt()
+    .system(...)
+    .user(...)
+    .call()
+    .entity(PlanOutput.class);
+```
+
+模型返回 `PlanOutput -> TripScope + List<PlannedTask>`，随后必须经过
+`PlanValidator` 的确定性检查：节点唯一、依赖存在、无环、副作用标记正确、
+必要业务步骤完整。LLM 不拥有最终执行权限。
+
+## Graph API
+
+完整拓扑位于：
+
+- `config/ExpenseGraphConfig.java`
+- `graph/ExpenseGraphNodes.java`
+- `graph/ExpenseGraphKeys.java`
+
+使用真实的：
+
+- `StateGraph.addNode`
+- `addEdge`
+- `addConditionalEdges`
+- 并行 fan-out / fan-in
+- `CompileConfig.interruptAfter`
+- `CompiledGraph.updateState`
+- `MysqlSaver`
+
+不存在第二套手写 Executor 工作流。
+
+## 生产 MCP
+
+四个真实 MCP Server 使用 Streamable HTTP：
+
+- email
+- drive
+- travel
+- expense
+
+每个 Server 使用独立 WebClient transport，可分别配置 URL、endpoint 和 Bearer Token。
+主链没有 Mock fallback；缺少真实 URL/凭证/Tool 时应启动失败，而不是返回假数据。
+
+完整 Tool Schema：`docs/production-mcp-contract.md`。
+
+## 可靠性
+
+| 问题 | 实现 |
 |---|---|
-| Planner + Executor / Task DAG | `agent`、`planner`、`executor` |
-| 条件路由 | `ExpenseAgentGraph` |
-| 有界线程池并发 | `ExecutorConfig`、`ParallelMaterialService` |
-| MCP Tool Gateway | `tool`、`mcp` |
-| 副作用幂等 | `SideEffectGuard`、`tool_execution_record` |
-| Checkpoint / 续跑 | `checkpoint`、`recovery` |
-| Redisson Lease + DB Version CAS | `coordination` |
-| Outbox + RocketMQ | `outbox` |
-| OpenTelemetry | `observability` |
-| 240 条异常测试数据 | `src/test/resources/eval` |
+| Agent 如何规划 | Spring AI Structured Output + PlanValidator |
+| 流程如何驱动 | Spring AI Alibaba StateGraph / CompiledGraph |
+| 三路材料怎么提速 | Graph fan-out/fan-in + 独立有界线程池 |
+| 外部系统怎么接 | Spring AI MCP Streamable HTTP |
+| 提交重复怎么办 | 幂等键 + DB 唯一索引 + requestId |
+| 提交超时但外部已成功 | UNKNOWN + query_expense_submission |
+| JVM 崩溃怎么续跑 | Graph MysqlSaver + RecoveryWorker |
+| 多实例重复抢任务 | Redisson watchdog lease |
+| 并发状态覆盖 | MySQL version CAS |
+| DB 成功但 MQ 未发送 | Transactional Outbox |
+| MQ 重复投递 | eventId + SideEffectGuard + consumed_event |
+| 怎么观察 | Spring AI Alibaba Graph Observation + OpenTelemetry |
+| 怎么评测 | 240 条故障 JSONL 数据集 |
 
-## 可靠性原则
+## 生产配置
 
-1. MySQL 是状态事实源；Redis 仅缓存热点上下文和租约。
-2. 查询类 Tool 可以有限重试；提交、通知等副作用 Tool 必须先经过审批和幂等检查。
-3. 外部调用“超时”不等于失败。副作用调用超时后进入 `UNKNOWN`，优先通过 requestId / idempotencyKey / businessNo 回查外部结果。
-4. Redisson 锁只减少重复抢占，数据库 version 乐观锁负责最终状态保护。
-5. 状态变更和 Outbox 事件同事务提交，MQ 消费侧再用 eventId 做幂等。
+复制 `.env.example` 的变量到部署平台 Secret/环境变量中。至少需要：
 
-> 本仓库不配置 GitHub Actions。代码以真实工程结构、关键链路完整和面试可解释性为目标，并提供可替换的 Mock MCP 适配器与故障注入测试数据。
+- `OPENAI_API_KEY / OPENAI_MODEL`
+- MySQL / Redis / RocketMQ
+- 四个 `*_MCP_URL`
+- 对应 MCP Token 或基础设施级 mTLS/Service Mesh 身份
+
+项目不会把真实凭证写进 Git。
+
+## 评测数据
+
+`src/test/resources/eval/expensepilot-240.jsonl` 包含 240 条异常用例：
+
+- 缺票
+- 重复提交
+- 政策冲突
+- Tool 超时
+- 进程崩溃
+
+指标定义见 `docs/evaluation.md`。仓库不会伪造 39%、81% -> 93%、91% 等运行结果；
+这些数字必须由真实压测/故障注入产生。
+
+> 按要求不使用 GitHub Actions 做真实集成测试。生产端到端验证需要部署方提供真实
+> LLM、MCP、MySQL、Redis、RocketMQ 与 OTLP 地址和凭证。
