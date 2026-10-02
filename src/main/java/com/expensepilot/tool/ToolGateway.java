@@ -19,10 +19,9 @@ public class ToolGateway {
 
     private static final Set<String> ALLOWED_TOOLS = Set.of(
             "search_email","search_drive","query_travel",
-            "parse_invoices","validate_materials","query_policy",
+            "parse_invoices","validate_materials",
             "check_expense_policy","build_expense_report_draft",
-            "submit_expense_report","query_expense_submission",
-            "send_notification","query_notification"
+            "submit_expense_report","send_notification"
     );
 
     private static final Set<String> APPROVAL_REQUIRED =
@@ -45,6 +44,7 @@ public class ToolGateway {
     private final ExpenseMcpClient mcpClient;
     private final SideEffectGuard sideEffectGuard;
     private final ApprovalService approvalService;
+    private final ToolArgumentValidator argumentValidator;
     private final ObservationRegistry observationRegistry;
     private final int maxReadRetries;
     private final long retryBackoffMs;
@@ -53,12 +53,14 @@ public class ToolGateway {
             ExpenseMcpClient mcpClient,
             SideEffectGuard sideEffectGuard,
             ApprovalService approvalService,
+            ToolArgumentValidator argumentValidator,
             ObservationRegistry observationRegistry,
             @Value("${expensepilot.tool.max-read-retries:3}") int maxReadRetries,
             @Value("${expensepilot.tool.read-retry-backoff-ms:200}") long retryBackoffMs) {
         this.mcpClient = mcpClient;
         this.sideEffectGuard = sideEffectGuard;
         this.approvalService = approvalService;
+        this.argumentValidator = argumentValidator;
         this.observationRegistry = observationRegistry;
         this.maxReadRetries = Math.max(1, maxReadRetries);
         this.retryBackoffMs = Math.max(0, retryBackoffMs);
@@ -187,10 +189,7 @@ public class ToolGateway {
             throw new IllegalArgumentException(
                     "Tool 不在生产允许列表: " + call.toolName());
         }
-        if (call.arguments() == null) {
-            throw new IllegalArgumentException(
-                    "Tool arguments 不能为空");
-        }
+        argumentValidator.validate(call);
     }
 
     private void sleepBackoff(int attempt) {
