@@ -75,6 +75,7 @@ public class ToolArgumentValidator {
                 requireString(call.arguments(), "eventId");
                 requireString(call.arguments(), "eventType");
                 requireString(call.arguments(), "templateCode");
+                requireString(call.arguments(), "businessNo");
                 requireTaskIdMatch(call);
 
                 if (!call.sideEffect()) {

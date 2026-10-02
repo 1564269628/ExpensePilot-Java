@@ -47,6 +47,14 @@ ExpensePilot 对 Tool 名称做契约，不依赖物理部署数量。
 - 通知事件里的 `taskId` 必须和 `ToolCall.taskId` 一致；
 - `submit_expense_report / send_notification` 必须显式标记为副作用。
 
+成功返回还会经过 `McpToolResultValidator` 的业务语义校验：
+
+- `validate_materials` 必须显式返回 boolean `complete` 和数组 `missingItems`；
+- `check_expense_policy` 必须显式返回 boolean `compliant` 和数组 `violations`；
+- `submit_expense_report` / 成功的提交回查必须返回非空 `externalBusinessNo`。
+
+因此关键路由字段缺失不会被 Java 的默认 false 误解释成“材料缺失”或“政策冲突”。
+
 MCP 异常分为两类：
 
 - `McpTransportException`：网络、远端调用等传输失败；查询 Tool 可以有限重试，

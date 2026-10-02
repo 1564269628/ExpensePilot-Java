@@ -27,6 +27,7 @@ public class SpringAiMcpExpenseClient implements ExpenseMcpClient {
 
     private final SyncMcpToolCallbackProvider toolCallbackProvider;
     private final ObjectMapper objectMapper;
+    private final McpToolResultValidator resultValidator;
 
     @Override
     public ToolResult invoke(
@@ -57,10 +58,17 @@ public class SpringAiMcpExpenseClient implements ExpenseMcpClient {
             );
         }
 
-        return decodeToolResult(
+        ToolResult result = decodeToolResult(
                 toolName,
                 rawResult
         );
+
+        resultValidator.validate(
+                toolName,
+                result
+        );
+
+        return result;
     }
 
     @Override

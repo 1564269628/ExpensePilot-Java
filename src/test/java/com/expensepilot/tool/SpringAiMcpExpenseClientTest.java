@@ -40,7 +40,8 @@ class SpringAiMcpExpenseClientTest {
         SpringAiMcpExpenseClient client =
                 new SpringAiMcpExpenseClient(
                         provider,
-                        new ObjectMapper()
+                        new ObjectMapper(),
+                        new McpToolResultValidator()
                 );
 
         ToolResult result = client.invoke(
