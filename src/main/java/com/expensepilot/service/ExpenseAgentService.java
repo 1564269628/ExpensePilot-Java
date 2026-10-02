@@ -157,21 +157,42 @@ public class ExpenseAgentService {
                             + task.status() + ", node=" + task.currentNode());
         }
 
-        RunnableConfig config = config(task.threadId());
         graphExecutor.execute(() -> {
             if (!taskLeaseService.tryAcquire(taskId)) {
                 return;
             }
+
             try {
+                // 队列等待期间任务可能已被另一个人工操作推进。
+                // 拿到分布式锁后必须再次读取 MySQL 事实，不能使用排队前的旧快照。
+                TaskStateStore.TaskSnapshot latest =
+                        taskStateStore.require(taskId);
+
+                if (!expectedStatus.equals(latest.status())
+                        || !expectedNode.equals(latest.currentNode())) {
+                    return;
+                }
+
+                RunnableConfig latestConfig =
+                        config(latest.threadId());
+
                 RunnableConfig updated = expenseCompiledGraph.updateState(
-                        config,
+                        latestConfig,
                         statePatch,
                         null
                 );
-                expenseCompiledGraph.stream(null, updated).blockLast();
+
+                expenseCompiledGraph.stream(
+                        null,
+                        updated
+                ).blockLast();
             }
             catch (Throwable ex) {
-                taskStateStore.markError(taskId, "graph-human-resume", ex);
+                taskStateStore.markError(
+                        taskId,
+                        "graph-human-resume",
+                        ex
+                );
             }
             finally {
                 taskLeaseService.release(taskId);

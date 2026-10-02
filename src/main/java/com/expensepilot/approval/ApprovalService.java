@@ -8,8 +8,8 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * 人工审批事实服务。
  *
- * <p>Graph 只负责“停在哪里等人”；真正的人类决定必须落 approval_record，
- * 这样恢复、审计和副作用网关都读取同一个审批事实。</p>
+ * <p>Graph 负责“停在哪里等人”，approval_record 保存唯一的人类决定。
+ * 审批记录必须先进入 PENDING，最终 APPROVED/REJECTED 只能 CAS 一次。</p>
  */
 @Service
 @RequiredArgsConstructor
@@ -21,10 +21,11 @@ public class ApprovalService {
         jdbcTemplate.update("""
                 insert into approval_record(task_id,operation_type,status)
                 values (?,?,'PENDING')
-                on duplicate key update
-                    status=if(status='APPROVED','APPROVED',
-                              if(status='REJECTED','REJECTED','PENDING'))
-                """, taskId, operationType);
+                on duplicate key update status=status
+                """,
+                taskId,
+                operationType
+        );
     }
 
     public boolean isApproved(long taskId, String operationType) {
@@ -34,7 +35,11 @@ public class ApprovalService {
                  where task_id=?
                    and operation_type=?
                    and status='APPROVED'
-                """, Integer.class, taskId, operationType);
+                """,
+                Integer.class,
+                taskId,
+                operationType
+        );
         return count != null && count > 0;
     }
 
@@ -44,7 +49,7 @@ public class ApprovalService {
             String operationType,
             String approver,
             String comment) {
-        upsertDecision(
+        decideOnce(
                 taskId,
                 operationType,
                 "APPROVED",
@@ -59,7 +64,7 @@ public class ApprovalService {
             String operationType,
             String approver,
             String comment) {
-        upsertDecision(
+        decideOnce(
                 taskId,
                 operationType,
                 "REJECTED",
@@ -69,39 +74,54 @@ public class ApprovalService {
     }
 
     /**
-     * 人工决定必须“有记录可查”。
+     * 只有 PENDING 能进入最终状态。
      *
-     * <p>政策冲突节点可能直接进入人工审批，并不一定提前调用 request()；
-     * 因此 approve/reject 都必须具备 upsert 能力，不能只 update 已存在记录。</p>
+     * <p>两个审批人并发操作时，数据库条件更新只允许一个 affectedRows=1；
+     * 后到的请求直接返回冲突，不能覆盖前一个人的决定。</p>
      */
-    private void upsertDecision(
+    private void decideOnce(
             long taskId,
             String operationType,
             String decision,
             String approver,
             String comment) {
 
-        jdbcTemplate.update("""
-                insert into approval_record(
-                    task_id,
-                    operation_type,
-                    status,
-                    approver,
-                    comment_text,
-                    decided_at
-                )
-                values (?,?,?,?,?,now())
-                on duplicate key update
-                    status=values(status),
-                    approver=values(approver),
-                    comment_text=values(comment_text),
-                    decided_at=now()
+        int affected = jdbcTemplate.update("""
+                update approval_record
+                   set status=?,
+                       approver=?,
+                       comment_text=?,
+                       decided_at=now()
+                 where task_id=?
+                   and operation_type=?
+                   and status='PENDING'
                 """,
-                taskId,
-                operationType,
                 decision,
                 approver,
-                comment
+                comment,
+                taskId,
+                operationType
+        );
+
+        if (affected == 1) {
+            return;
+        }
+
+        String existing = jdbcTemplate.query("""
+                select status
+                  from approval_record
+                 where task_id=? and operation_type=?
+                """,
+                (rs, i) -> rs.getString("status"),
+                taskId,
+                operationType
+        ).stream().findFirst().orElse("MISSING");
+
+        throw new IllegalStateException(
+                "审批已被处理或审批记录不存在: operationType="
+                        + operationType
+                        + ", currentStatus="
+                        + existing
         );
     }
 }

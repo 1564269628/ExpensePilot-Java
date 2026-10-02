@@ -95,8 +95,13 @@ Checkpoint 使用 Spring AI Alibaba 自带 `MysqlSaver`，而不是业务代码�
 - Graph：负责中断和恢复；
 - `approval_record`：负责保存人工事实。
 
-`approve/reject` 都使用 upsert，因此即使政策异常审批没有预先创建 PENDING 记录，
-最终的人类决定也一定可审计。
+Graph 进入 `humanApproval` / `submitApproval` 时先创建 `PENDING` 审批记录。
+最终 `APPROVED/REJECTED` 使用条件更新 `where status='PENDING'`，所以两个审批人
+并发点击时只有一个决定能成功，后到请求不能覆盖前一个人的决定。
+
+Human resume 在进入线程池前会做一次快速状态检查，真正拿到 Redisson 锁后还会再次读取
+MySQL 的 `status/current_node`。这样排队期间即使另一个人工操作已经推进 Graph，
+旧的 state patch 也不会写进后续 checkpoint。
 
 最终 `SUBMIT_REPORT` 除了 Graph 审批分支外，ToolGateway 还会再次读取
 `approval_record`，形成“工作流层 + 副作用网关层”双重保护。

@@ -4,6 +4,7 @@ import com.alibaba.cloud.ai.graph.OverAllState;
 import com.expensepilot.agent.PlanAuditService;
 import com.expensepilot.agent.PlanOutput;
 import com.expensepilot.agent.Planner;
+import com.expensepilot.approval.ApprovalService;
 import com.expensepilot.outbox.OutboxService;
 import com.expensepilot.tool.ToolCall;
 import com.expensepilot.tool.ToolGateway;
@@ -28,6 +29,7 @@ public class ExpenseGraphNodes {
 
     private final Planner planner;
     private final PlanAuditService planAuditService;
+    private final ApprovalService approvalService;
     private final ToolGateway toolGateway;
     private final OutboxService outboxService;
     private final TaskStateStore taskStateStore;
@@ -215,7 +217,9 @@ public class ExpenseGraphNodes {
     }
 
     public Map<String, Object> humanApproval(OverAllState state) {
-        taskStateStore.update(taskId(state), "WAITING_APPROVAL", "humanApproval");
+        long taskId = taskId(state);
+        approvalService.request(taskId, "POLICY_EXCEPTION");
+        taskStateStore.update(taskId, "WAITING_APPROVAL", "humanApproval");
         Map<String, Object> policy = requireMap(state, POLICY_RESULT);
         return Map.of(
                 TASK_STATUS, "WAITING_APPROVAL",
@@ -248,7 +252,9 @@ public class ExpenseGraphNodes {
     }
 
     public Map<String, Object> submitApproval(OverAllState state) {
-        taskStateStore.update(taskId(state), "WAITING_APPROVAL", "submitApproval");
+        long taskId = taskId(state);
+        approvalService.request(taskId, "SUBMIT_REPORT");
+        taskStateStore.update(taskId, "WAITING_APPROVAL", "submitApproval");
         return Map.of(
                 TASK_STATUS, "WAITING_APPROVAL",
                 WAITING_REASON, "报销单已生成，等待最终提交审批"
