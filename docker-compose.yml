@@ -7,7 +7,7 @@ services:
     ports:
       - "3306:3306"
     volumes:
-      - ./src/main/resources/db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - mysql-data:/var/lib/mysql
 
   redis:
     image: redis:7.2-alpine
@@ -37,3 +37,6 @@ services:
       - ./ops/otel-collector.yaml:/etc/otelcol-contrib/config.yaml:ro
     ports:
       - "4318:4318"
+
+volumes:
+  mysql-data:

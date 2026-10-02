@@ -8,11 +8,6 @@
   <version>0.2.0-SNAPSHOT</version>
   <name>ExpensePilot-Java</name>
 
-  <!--
-    版本按 Spring AI Alibaba 1.1.2.x 官方兼容矩阵对齐：
-    Spring Boot 3.5.8 + Spring AI 1.1.2 + Spring AI Alibaba 1.1.2.2。
-    不混搭 Spring AI 2.x，避免 Graph/MCP API 二进制不兼容。
-  -->
   <properties>
     <java.version>21</java.version>
     <spring-boot.version>3.5.8</spring-boot.version>
@@ -70,23 +65,20 @@
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-actuator</artifactId>
     </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-data-redis</artifactId>
+    </dependency>
 
-    <!-- Spring AI：LLM + Structured Output -->
     <dependency>
       <groupId>org.springframework.ai</groupId>
       <artifactId>spring-ai-starter-model-openai</artifactId>
     </dependency>
-
-    <!--
-      生产环境 MCP 使用 Streamable HTTP + WebFlux transport。
-      邮箱/网盘/差旅/报销均连接真实远程 MCP Server，不在主链使用 Mock。
-    -->
     <dependency>
       <groupId>org.springframework.ai</groupId>
       <artifactId>spring-ai-starter-mcp-client-webflux</artifactId>
     </dependency>
 
-    <!-- Graph Runtime + Graph Observation -->
     <dependency>
       <groupId>com.alibaba.cloud.ai</groupId>
       <artifactId>spring-ai-alibaba-graph-core</artifactId>
@@ -106,6 +98,15 @@
       <artifactId>mysql-connector-j</artifactId>
       <scope>runtime</scope>
     </dependency>
+    <dependency>
+      <groupId>org.flywaydb</groupId>
+      <artifactId>flyway-core</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.flywaydb</groupId>
+      <artifactId>flyway-mysql</artifactId>
+    </dependency>
+
     <dependency>
       <groupId>org.redisson</groupId>
       <artifactId>redisson-spring-boot-starter</artifactId>
@@ -131,7 +132,6 @@
       <artifactId>lombok</artifactId>
       <optional>true</optional>
     </dependency>
-
     <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-test</artifactId>
