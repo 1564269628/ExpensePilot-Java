@@ -1,5 +1,6 @@
 package com.expensepilot.graph;
 
+import com.expensepilot.cache.TaskContextCache;
 import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
@@ -9,15 +10,15 @@ import java.util.Optional;
 /**
  * MySQL 业务状态事实源。
  *
- * <p>Graph Checkpoint 决定“工作流从哪里继续”，expense_task 决定“业务事实是什么”。
- * 每次状态迁移使用 version compare-and-set，两个执行者即使同时读到同一版本，
- * 也只有一个能成功写入，避免并发覆盖。</p>
+ * <p>Graph Checkpoint 决定“从哪里继续”，expense_task 决定“业务事实是什么”。
+ * 状态迁移使用 version CAS；成功后主动失效 Redis 热点视图。</p>
  */
 @Repository
 @RequiredArgsConstructor
 public class TaskStateStore {
 
     private final JdbcTemplate jdbcTemplate;
+    private final TaskContextCache taskContextCache;
 
     public int update(long taskId, String status, String node) {
         TaskSnapshot snapshot = require(taskId);
@@ -42,12 +43,12 @@ public class TaskStateStore {
                             + ", expectedVersion=" + snapshot.version());
         }
 
+        taskContextCache.evict(taskId);
         return snapshot.version() + 1;
     }
 
     /**
-     * 异常标记不推进 version，避免“DB 版本已经变化但最新 Graph Checkpoint
-     * 还保留旧版本”的恢复窗口。下一次真正业务迁移仍然使用 version CAS。
+     * 异常标记不推进 version，避免 DB version 与最近 Graph Checkpoint 无谓错位。
      */
     public void markError(long taskId, String node, Throwable error) {
         jdbcTemplate.update("""
@@ -69,6 +70,7 @@ public class TaskStateStore {
                 safeMessage(error),
                 taskId
         );
+        taskContextCache.evict(taskId);
     }
 
     public TaskSnapshot require(long taskId) {

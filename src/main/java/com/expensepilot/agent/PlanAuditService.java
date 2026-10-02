@@ -1,5 +1,6 @@
 package com.expensepilot.agent;
 
+import com.expensepilot.cache.TaskContextCache;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -9,9 +10,6 @@ import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Structured Output 计划审计。
- *
- * <p>Graph Checkpoint 能恢复运行状态，但审计/排障还需要一份易查询的业务计划快照。
- * 因此 Planner 校验通过后，把 PlanOutput 与每个 DAG 节点写入 MySQL。</p>
  */
 @Service
 @RequiredArgsConstructor
@@ -19,29 +17,17 @@ public class PlanAuditService {
 
     private final JdbcTemplate jdbcTemplate;
     private final ObjectMapper objectMapper;
+    private final TaskContextCache taskContextCache;
 
     @Transactional
     public void persist(long taskId, PlanOutput output) {
         try {
-            String tripScopeJson =
-                    objectMapper.writeValueAsString(output.tripScope());
-
             jdbcTemplate.update("""
                     insert into agent_plan(
-                        task_id,
-                        goal,
-                        trip_scope_json,
-                        needs_clarification,
-                        clarification_questions_json,
-                        plan_summary
+                        task_id,goal,trip_scope_json,needs_clarification,
+                        clarification_questions_json,plan_summary
                     )
-                    values (
-                        ?,?,
-                        cast(? as json),
-                        ?,
-                        cast(? as json),
-                        ?
-                    )
+                    values (?, ?, cast(? as json), ?, cast(? as json), ?)
                     on duplicate key update
                         goal=values(goal),
                         trip_scope_json=values(trip_scope_json),
@@ -52,31 +38,19 @@ public class PlanAuditService {
                     """,
                     taskId,
                     output.goal(),
-                    tripScopeJson,
+                    objectMapper.writeValueAsString(output.tripScope()),
                     output.needsClarification(),
-                    objectMapper.writeValueAsString(
-                            output.clarificationQuestions()),
+                    objectMapper.writeValueAsString(output.clarificationQuestions()),
                     output.planSummary()
             );
 
             for (PlannedTask task : output.tasks()) {
                 jdbcTemplate.update("""
                         insert into agent_step(
-                            task_id,
-                            step_key,
-                            step_type,
-                            status,
-                            depends_on_json,
-                            input_json,
-                            retry_count
+                            task_id,step_key,step_type,status,
+                            depends_on_json,input_json,retry_count
                         )
-                        values (
-                            ?,?,?,
-                            'PENDING',
-                            cast(? as json),
-                            cast(? as json),
-                            0
-                        )
+                        values (?, ?, ?, 'PENDING', cast(? as json), cast(? as json), 0)
                         on duplicate key update
                             step_type=values(step_type),
                             depends_on_json=values(depends_on_json),
@@ -89,12 +63,11 @@ public class PlanAuditService {
                         objectMapper.writeValueAsString(task.input())
                 );
             }
+
+            taskContextCache.evict(taskId);
         }
         catch (JsonProcessingException ex) {
-            throw new IllegalStateException(
-                    "PlanOutput 持久化失败",
-                    ex
-            );
+            throw new IllegalStateException("PlanOutput 持久化失败", ex);
         }
     }
 }
