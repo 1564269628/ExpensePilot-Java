@@ -1,6 +1,7 @@
 package com.expensepilot.api;
 
 import org.springframework.http.HttpStatus;
+import org.springframework.core.task.TaskRejectedException;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -27,6 +28,17 @@ public class ApiExceptionHandler {
         return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of(
                 "code", "STATE_CONFLICT",
                 "message", safeMessage(ex)
+        ));
+    }
+
+    @ExceptionHandler(TaskRejectedException.class)
+    public ResponseEntity<Map<String, Object>> overloaded(
+            TaskRejectedException ex) {
+        return ResponseEntity.status(
+                HttpStatus.SERVICE_UNAVAILABLE
+        ).body(Map.of(
+                "code", "EXECUTOR_SATURATED",
+                "message", "当前任务执行队列已满，请稍后重试"
         ));
     }
 

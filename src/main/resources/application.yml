@@ -54,6 +54,7 @@ expensepilot:
   recovery:
     scan-delay-ms: 3000
   pools:
+    graph: { core: 8, max: 16, queue: 200 }
     email: { core: 8, max: 16, queue: 100 }
     drive: { core: 8, max: 16, queue: 100 }
     travel: { core: 8, max: 16, queue: 100 }

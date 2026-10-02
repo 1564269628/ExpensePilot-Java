@@ -6,6 +6,7 @@ import com.expensepilot.coordination.TaskLeaseService;
 import com.expensepilot.graph.TaskStateStore;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.core.task.TaskRejectedException;
 import org.springframework.stereotype.Service;
 
 import java.util.Map;
@@ -54,11 +55,12 @@ public class ExpenseAgentService {
                 values (?,?,?,'CREATED',?,0,0)
                 """, taskId, userId, requestText, threadId);
 
-        graphExecutor.execute(() -> execute(
+        scheduleRecoverable(() -> execute(
                 taskId,
                 initialState(taskId, userId, requestText),
                 config(threadId)
         ));
+
         return taskId;
     }
 
@@ -70,7 +72,7 @@ public class ExpenseAgentService {
                             + "，必须走对应的补件/澄清/审批接口");
         }
 
-        graphExecutor.execute(() -> {
+        scheduleRecoverable(() -> {
             if ("CREATED".equals(task.status())) {
                 execute(
                         taskId,
@@ -104,7 +106,7 @@ public class ExpenseAgentService {
         TaskStateStore.TaskSnapshot task =
                 taskStateStore.resetForReplan(taskId, newThreadId);
 
-        graphExecutor.execute(() -> execute(
+        scheduleRecoverable(() -> execute(
                 taskId,
                 initialState(taskId, task.userId(), task.requestText()),
                 config(task.threadId())
@@ -157,6 +159,8 @@ public class ExpenseAgentService {
                             + task.status() + ", node=" + task.currentNode());
         }
 
+        // Human-in-the-loop 输入不能静默丢弃。线程池满时让 TaskRejectedException
+        // 冒泡到 API，由 ControllerAdvice 返回 503，客户端可以明确重试。
         graphExecutor.execute(() -> {
             if (!taskLeaseService.tryAcquire(taskId)) {
                 return;
@@ -198,6 +202,20 @@ public class ExpenseAgentService {
                 taskLeaseService.release(taskId);
             }
         });
+    }
+
+    /**
+     * 创建/机器恢复/Replan 都有 MySQL 状态可重新发现。
+     * 如果 graphExecutor 饱和，保持当前可恢复状态，由 RecoveryWorker 后续再次调度。
+     */
+    private void scheduleRecoverable(Runnable runnable) {
+        try {
+            graphExecutor.execute(runnable);
+        }
+        catch (TaskRejectedException saturated) {
+            // 故意不把任务标 FAILED：
+            // CREATED/RETRYING/UNKNOWN 会继续被 RecoveryWorker 扫描。
+        }
     }
 
     private void execute(
