@@ -4,27 +4,66 @@ server:
 spring:
   application:
     name: expensepilot-java
+
   datasource:
     url: ${MYSQL_URL:jdbc:mysql://localhost:3306/expensepilot?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai}
     username: ${MYSQL_USERNAME:root}
     password: ${MYSQL_PASSWORD:root}
+
   data:
     redis:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
+
   ai:
     openai:
-      api-key: ${OPENAI_API_KEY:demo-key}
+      # 生产环境必须显式传入真实凭证，不再使用 demo key。
+      api-key: ${OPENAI_API_KEY}
       base-url: ${OPENAI_BASE_URL:https://api.openai.com}
       chat:
         options:
-          model: ${OPENAI_MODEL:gpt-5.6}
+          model: ${OPENAI_MODEL}
+          temperature: 0.1
+
+    # 真实生产 MCP：四个远程 Server 通过 Streamable HTTP 接入。
+    # 每个 MCP Server 负责封装对应企业系统的 OAuth/RPC/SDK/内部网关。
+    mcp:
+      client:
+        enabled: true
+        name: expensepilot-production
+        version: 1.0.0
+        type: SYNC
+        initialized: true
+        request-timeout: 10s
+        toolcallback:
+          enabled: true
+        streamable-http:
+          connections:
+            email:
+              url: ${EMAIL_MCP_URL}
+              endpoint: ${EMAIL_MCP_ENDPOINT:/mcp}
+            drive:
+              url: ${DRIVE_MCP_URL}
+              endpoint: ${DRIVE_MCP_ENDPOINT:/mcp}
+            travel:
+              url: ${TRAVEL_MCP_URL}
+              endpoint: ${TRAVEL_MCP_ENDPOINT:/mcp}
+            expense:
+              url: ${EXPENSE_MCP_URL}
+              endpoint: ${EXPENSE_MCP_ENDPOINT:/mcp}
+
 expensepilot:
+  planner:
+    zone-id: ${BUSINESS_ZONE_ID:Asia/Shanghai}
+    max-attempts: 3
+
   tool:
     default-timeout-ms: 5000
+
   recovery:
     scan-delay-ms: 3000
     max-retry: 3
+
   pools:
     email:
       core: 8
