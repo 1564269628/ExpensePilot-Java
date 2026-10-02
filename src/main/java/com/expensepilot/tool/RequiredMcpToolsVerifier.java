@@ -8,9 +8,7 @@ import org.springframework.stereotype.Component;
 import java.util.List;
 
 /**
- * 生产启动自检：必需 MCP 工具缺一个就启动失败。
- *
- * <p>这样不会出现“服务启动看起来正常，跑到提交阶段才发现报销系统根本没接上”的假联通。</p>
+ * 启动即校验完整生产工具契约，缺任何一个都拒绝启动。
  */
 @Component
 @RequiredArgsConstructor
@@ -20,8 +18,10 @@ public class RequiredMcpToolsVerifier implements ApplicationRunner {
             "search_email",
             "search_drive",
             "query_travel",
-            "query_policy",
-            "create_expense_report",
+            "parse_invoices",
+            "validate_materials",
+            "check_expense_policy",
+            "build_expense_report_draft",
             "submit_expense_report",
             "query_expense_submission",
             "send_notification",

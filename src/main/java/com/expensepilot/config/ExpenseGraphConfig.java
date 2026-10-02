@@ -1,80 +1,197 @@
 package com.expensepilot.config;
 
 import com.alibaba.cloud.ai.graph.*;
+import com.alibaba.cloud.ai.graph.action.AsyncNodeAction;
+import com.alibaba.cloud.ai.graph.checkpoint.config.SaverConfig;
+import com.alibaba.cloud.ai.graph.checkpoint.savers.mysql.CreateOption;
+import com.alibaba.cloud.ai.graph.checkpoint.savers.mysql.MysqlSaver;
 import com.alibaba.cloud.ai.graph.exception.GraphStateException;
 import com.alibaba.cloud.ai.graph.state.strategy.ReplaceStrategy;
+import com.expensepilot.graph.ExpenseGraphNodes;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+import javax.sql.DataSource;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
 
 import static com.alibaba.cloud.ai.graph.StateGraph.END;
 import static com.alibaba.cloud.ai.graph.StateGraph.START;
 import static com.alibaba.cloud.ai.graph.action.AsyncEdgeAction.edge_async;
 import static com.alibaba.cloud.ai.graph.action.AsyncNodeAction.node_async;
+import static com.expensepilot.graph.ExpenseGraphKeys.*;
 
 /**
- * Spring AI Alibaba Graph 的真实 StateGraph 装配示例。
+ * ExpensePilot 的唯一工作流编排入口。
  *
- * <p>业务 Runtime 仍保留自己的持久化/幂等能力；Graph 负责表达节点拓扑和条件路由。
- * 这样即使未来切换 Graph Checkpointer，也不会破坏 MySQL 中的业务事实状态。</p>
+ * <p>整个主流程由 Spring AI Alibaba Graph 驱动：
+ * 节点负责业务动作，addEdge 负责固定流程，addConditionalEdges 负责业务分支，
+ * 并行 fan-out/fan-in 由 Graph Runtime 管理，人工等待由 interruptAfter 管理。</p>
  */
 @Configuration
 public class ExpenseGraphConfig {
 
     @Bean
-    public StateGraph expenseStateGraph() throws GraphStateException {
+    public MysqlSaver expenseMysqlSaver(DataSource dataSource) {
+        return MysqlSaver.builder()
+                .dataSource(dataSource)
+                .stateSerializer(StateGraph.DEFAULT_JACKSON_SERIALIZER)
+                .createOption(CreateOption.CREATE_IF_NOT_EXISTS)
+                .maxCachedThreads(1000)
+                .build();
+    }
+
+    @Bean
+    public StateGraph expenseStateGraph(
+            ExpenseGraphNodes nodes,
+            @Qualifier("emailExecutor") Executor emailExecutor,
+            @Qualifier("driveExecutor") Executor driveExecutor,
+            @Qualifier("travelExecutor") Executor travelExecutor) throws GraphStateException {
+
         KeyStrategyFactory keys = () -> {
             HashMap<String, KeyStrategy> map = new HashMap<>();
-            map.put("taskId", new ReplaceStrategy());
-            map.put("missingMaterial", new ReplaceStrategy());
-            map.put("policyConflict", new ReplaceStrategy());
-            map.put("businessNo", new ReplaceStrategy());
-            map.put("nextNode", new ReplaceStrategy());
+
+            // 所有字段都是单值事实；并行分支写不同 key，因此不会互相覆盖。
+            for (String key : new String[] {
+                    TASK_ID, USER_ID, REQUEST_TEXT,
+                    PLAN, TRIP_START, TRIP_END, TRIP_CITY, CLARIFICATION_QUESTIONS, PLANNER_ROUTE,
+                    EMAIL_RESULT, DRIVE_RESULT, TRAVEL_RESULT, INVOICE_RESULT,
+                    MATERIAL_RESULT, SUPPLEMENTAL_MATERIALS, MATERIAL_ROUTE,
+                    POLICY_RESULT, POLICY_ROUTE, POLICY_APPROVED, POLICY_DECISION_ROUTE,
+                    REPORT_DRAFT, SUBMIT_APPROVED, SUBMIT_DECISION_ROUTE, SUBMIT_RESULT,
+                    TASK_STATUS, WAITING_REASON, "eventId"
+            }) {
+                map.put(key, new ReplaceStrategy());
+            }
             return map;
         };
 
-        var graph = new StateGraph(keys)
-                .addNode("planner", node_async(state -> Map.of("nextNode", "collectMaterials")))
-                .addNode("collectMaterials", node_async(state -> Map.of("nextNode", "materialCheck")))
-                .addNode("materialCheck", node_async(state -> {
-                    boolean missing = state.value("missingMaterial")
-                            .map(Boolean.class::cast).orElse(false);
-                    return Map.of("nextNode", missing ? "requestSupplement" : "policyCheck");
-                }))
-                .addNode("requestSupplement", node_async(state -> Map.of("nextNode", "end")))
-                .addNode("policyCheck", node_async(state -> {
-                    boolean conflict = state.value("policyConflict")
-                            .map(Boolean.class::cast).orElse(false);
-                    return Map.of("nextNode", conflict ? "humanApproval" : "generateReport");
-                }))
-                .addNode("humanApproval", node_async(state -> Map.of("nextNode", "generateReport")))
-                .addNode("generateReport", node_async(state -> Map.of("nextNode", "submit")))
-                .addNode("submit", node_async(state -> Map.of("nextNode", "end")));
+        AsyncNodeAction email = state -> CompletableFuture.supplyAsync(
+                () -> nodes.searchEmail(state), emailExecutor);
+        AsyncNodeAction drive = state -> CompletableFuture.supplyAsync(
+                () -> nodes.searchDrive(state), driveExecutor);
+        AsyncNodeAction travel = state -> CompletableFuture.supplyAsync(
+                () -> nodes.queryTravel(state), travelExecutor);
+
+        StateGraph graph = new StateGraph(keys)
+                .addNode("planner", node_async(nodes::planner))
+                .addNode("requestClarification", node_async(nodes::requestClarification))
+                .addNode("resolveTripRange", node_async(nodes::resolveTripRange))
+
+                // 三个生产系统真正并行。
+                .addNode("emailSearch", email)
+                .addNode("driveSearch", drive)
+                .addNode("travelQuery", travel)
+                .addNode("materialJoin", node_async(nodes::materialJoin))
+
+                .addNode("parseInvoices", node_async(nodes::parseInvoices))
+                .addNode("materialCheck", node_async(nodes::checkMaterial))
+                .addNode("requestSupplement", node_async(nodes::requestSupplement))
+
+                .addNode("policyCheck", node_async(nodes::checkPolicy))
+                .addNode("humanApproval", node_async(nodes::humanApproval))
+                .addNode("policyApprovalDecision", node_async(nodes::policyApprovalDecision))
+
+                .addNode("generateReport", node_async(nodes::generateReport))
+                .addNode("submitApproval", node_async(nodes::submitApproval))
+                .addNode("submitDecision", node_async(nodes::submitDecision))
+                .addNode("submit", node_async(nodes::submit))
+                .addNode("outbox", node_async(nodes::outbox))
+                .addNode("rejected", node_async(nodes::rejected));
 
         graph.addEdge(START, "planner");
-        graph.addEdge("planner", "collectMaterials");
-        graph.addEdge("collectMaterials", "materialCheck");
 
-        graph.addConditionalEdges("materialCheck",
-                edge_async(state -> (String) state.value("nextNode").orElse("policyCheck")),
+        graph.addConditionalEdges(
+                "planner",
+                edge_async(state -> (String) state.value(PLANNER_ROUTE).orElse("CLARIFY")),
                 Map.of(
-                        "requestSupplement", "requestSupplement",
-                        "policyCheck", "policyCheck"
+                        "READY", "resolveTripRange",
+                        "CLARIFY", "requestClarification"
                 ));
 
-        graph.addConditionalEdges("policyCheck",
-                edge_async(state -> (String) state.value("nextNode").orElse("generateReport")),
+        graph.addEdge("requestClarification", "resolveTripRange");
+
+        // fan-out：Graph Runtime 同时调度三个材料来源。
+        graph.addEdge("resolveTripRange", "emailSearch");
+        graph.addEdge("resolveTripRange", "driveSearch");
+        graph.addEdge("resolveTripRange", "travelQuery");
+
+        // fan-in：三个并行分支都完成后，Graph 才进入 materialJoin。
+        graph.addEdge("emailSearch", "materialJoin");
+        graph.addEdge("driveSearch", "materialJoin");
+        graph.addEdge("travelQuery", "materialJoin");
+
+        graph.addEdge("materialJoin", "parseInvoices");
+        graph.addEdge("parseInvoices", "materialCheck");
+
+        graph.addConditionalEdges(
+                "materialCheck",
+                edge_async(state -> (String) state.value(MATERIAL_ROUTE).orElse("MISSING")),
                 Map.of(
-                        "humanApproval", "humanApproval",
-                        "generateReport", "generateReport"
+                        "READY", "policyCheck",
+                        "MISSING", "requestSupplement"
                 ));
 
-        graph.addEdge("humanApproval", "generateReport");
-        graph.addEdge("generateReport", "submit");
-        graph.addEdge("requestSupplement", END);
-        graph.addEdge("submit", END);
+        // 用户补件后重新做材料检查，不重复查询已经完成的邮箱/网盘/差旅节点。
+        graph.addEdge("requestSupplement", "materialCheck");
+
+        graph.addConditionalEdges(
+                "policyCheck",
+                edge_async(state -> (String) state.value(POLICY_ROUTE).orElse("CONFLICT")),
+                Map.of(
+                        "PASS", "generateReport",
+                        "CONFLICT", "humanApproval"
+                ));
+
+        graph.addEdge("humanApproval", "policyApprovalDecision");
+        graph.addConditionalEdges(
+                "policyApprovalDecision",
+                edge_async(state -> (String) state.value(POLICY_DECISION_ROUTE).orElse("REJECTED")),
+                Map.of(
+                        "APPROVED", "generateReport",
+                        "REJECTED", "rejected"
+                ));
+
+        graph.addEdge("generateReport", "submitApproval");
+        graph.addEdge("submitApproval", "submitDecision");
+        graph.addConditionalEdges(
+                "submitDecision",
+                edge_async(state -> (String) state.value(SUBMIT_DECISION_ROUTE).orElse("REJECTED")),
+                Map.of(
+                        "APPROVED", "submit",
+                        "REJECTED", "rejected"
+                ));
+
+        graph.addEdge("submit", "outbox");
+        graph.addEdge("outbox", END);
+        graph.addEdge("rejected", END);
+
         return graph;
+    }
+
+    @Bean
+    public CompiledGraph expenseCompiledGraph(
+            StateGraph expenseStateGraph,
+            MysqlSaver expenseMysqlSaver) throws GraphStateException {
+
+        SaverConfig saverConfig = SaverConfig.builder()
+                .register(expenseMysqlSaver)
+                .build();
+
+        CompileConfig compileConfig = CompileConfig.builder()
+                .saverConfig(saverConfig)
+                // 节点先把 WAITING_* 状态落业务表，然后 Graph 自动保存 checkpoint 并暂停。
+                .interruptAfter(
+                        "requestClarification",
+                        "requestSupplement",
+                        "humanApproval",
+                        "submitApproval"
+                )
+                .build();
+
+        return expenseStateGraph.compile(compileConfig);
     }
 }
