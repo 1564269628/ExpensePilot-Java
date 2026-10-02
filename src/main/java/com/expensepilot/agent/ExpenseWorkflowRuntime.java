@@ -121,7 +121,17 @@ public class ExpenseWorkflowRuntime {
                 true,
                 "SUBMIT_REPORT"
         ));
-        if (!result.success()) throw new IllegalStateException("报销提交失败: " + result.message());
+        if (!result.success() && "APPROVAL_REQUIRED".equals(result.code())) {
+            // 审批是正常的业务暂停点，不应进入异常重试。
+            state.setTaskStatus(TaskStatus.WAITING_APPROVAL);
+            state.setCurrentNode("humanApproval");
+            updateTask(state.getTaskId(), "WAITING_APPROVAL", "humanApproval");
+            checkpointRepository.save(state, "humanApproval");
+            return;
+        }
+        if (!result.success()) {
+            throw new IllegalStateException("报销提交失败: " + result.message());
+        }
 
         state.markCompleted("submit-report");
         state.getContext().put("businessNo", result.externalBusinessNo());

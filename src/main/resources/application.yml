@@ -19,11 +19,6 @@ spring:
       chat:
         options:
           model: ${OPENAI_MODEL:gpt-5.6}
-  rocketmq:
-    name-server: ${ROCKETMQ_NAMESRV:localhost:9876}
-    producer:
-      group: expensepilot-producer
-
 expensepilot:
   tool:
     default-timeout-ms: 5000
@@ -55,3 +50,8 @@ management:
     web:
       exposure:
         include: health,info,metrics,prometheus
+
+rocketmq:
+  name-server: ${ROCKETMQ_NAMESRV:localhost:9876}
+  producer:
+    group: expensepilot-producer

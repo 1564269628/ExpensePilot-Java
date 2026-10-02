@@ -1,7 +1,8 @@
 package com.expensepilot.outbox;
 
 import lombok.RequiredArgsConstructor;
-import org.apache.rocketmq.spring.annotation.*;
+import org.apache.rocketmq.spring.annotation.RocketMQMessageListener;
+import org.apache.rocketmq.spring.core.RocketMQListener;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
