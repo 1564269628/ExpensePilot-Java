@@ -9,9 +9,7 @@ import org.springframework.web.bind.annotation.*;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-/**
- * Graph Human-in-the-loop 审批入口。
- */
+/** Graph Human-in-the-loop 审批入口。 */
 @RestController
 @RequestMapping("/api/v1/expense-tasks/{taskId}/approval")
 @RequiredArgsConstructor
@@ -27,8 +25,18 @@ public class ApprovalController {
             @RequestParam String approver,
             @RequestParam(defaultValue = "") String comment) {
 
-        approvalService.approve(taskId, operationType, approver, comment);
-        expenseAgentService.resume(taskId, approvalPatch(operationType, true, approver));
+        approvalService.approve(
+                taskId,
+                operationType,
+                approver,
+                comment
+        );
+
+        expenseAgentService.resumeApproval(
+                taskId,
+                operationType,
+                approvalPatch(operationType, true, approver)
+        );
 
         return ResponseEntity.ok(Map.of(
                 "taskId", taskId,
@@ -44,8 +52,18 @@ public class ApprovalController {
             @RequestParam String approver,
             @RequestParam(defaultValue = "") String comment) {
 
-        approvalService.reject(taskId, operationType, approver, comment);
-        expenseAgentService.resume(taskId, approvalPatch(operationType, false, approver));
+        approvalService.reject(
+                taskId,
+                operationType,
+                approver,
+                comment
+        );
+
+        expenseAgentService.resumeApproval(
+                taskId,
+                operationType,
+                approvalPatch(operationType, false, approver)
+        );
 
         return ResponseEntity.ok(Map.of(
                 "taskId", taskId,
@@ -58,6 +76,7 @@ public class ApprovalController {
             String operationType,
             boolean approved,
             String approver) {
+
         Map<String, Object> patch = new LinkedHashMap<>();
         patch.put("lastApprover", approver);
 

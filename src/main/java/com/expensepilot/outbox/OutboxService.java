@@ -13,8 +13,8 @@ import java.util.UUID;
 /**
  * Transactional Outbox。
  *
- * <p>报销任务变为 SUCCEEDED 与 EXPENSE_SUBMITTED 事件插入同一个 MySQL 本地事务。
- * 这样不会出现“报销已经成功，但通知事件根本没记录下来”的中间状态。</p>
+ * <p>任务成功状态和待发布事件在同一个 MySQL 事务里提交。
+ * 状态更新使用 version CAS，避免并发执行者覆盖彼此结果。</p>
  */
 @Service
 @RequiredArgsConstructor
@@ -28,17 +28,31 @@ public class OutboxService {
             long taskId,
             String businessNo) {
 
+        Integer expectedVersion = jdbcTemplate.queryForObject(
+                "select version from expense_task where id=?",
+                Integer.class,
+                taskId
+        );
+        if (expectedVersion == null) {
+            throw new IllegalStateException("任务不存在: " + taskId);
+        }
+
         int affected = jdbcTemplate.update("""
                 update expense_task
                    set status='SUCCEEDED',
                        current_node='outbox',
                        last_error=null,
                        version=version+1
-                 where id=?
-                """, taskId);
+                 where id=? and version=?
+                """,
+                taskId,
+                expectedVersion
+        );
 
         if (affected != 1) {
-            throw new IllegalStateException("任务不存在，不能写 Outbox: " + taskId);
+            throw new IllegalStateException(
+                    "任务成功状态 CAS 失败: taskId=" + taskId
+                            + ", expectedVersion=" + expectedVersion);
         }
 
         String eventId = UUID.randomUUID().toString();
@@ -76,8 +90,10 @@ public class OutboxService {
             return eventId;
         }
         catch (JsonProcessingException ex) {
-            // 当前方法有 @Transactional，序列化/插入任何一步失败都会回滚任务状态。
-            throw new IllegalStateException("Outbox payload 序列化失败", ex);
+            throw new IllegalStateException(
+                    "Outbox payload 序列化失败",
+                    ex
+            );
         }
     }
 }

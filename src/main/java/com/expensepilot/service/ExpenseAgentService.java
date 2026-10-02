@@ -4,37 +4,50 @@ import com.alibaba.cloud.ai.graph.CompiledGraph;
 import com.alibaba.cloud.ai.graph.RunnableConfig;
 import com.expensepilot.coordination.TaskLeaseService;
 import com.expensepilot.graph.TaskStateStore;
-import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.Executor;
 
 import static com.expensepilot.graph.ExpenseGraphKeys.*;
 
 /**
- * Graph Runtime 的应用入口。
+ * Graph Runtime 应用入口。
  *
- * <p>这里不再编排业务步骤，只负责：
- * 1. 创建业务任务；
- * 2. 给 CompiledGraph 提供初始 State / threadId；
- * 3. 人工输入后 updateState 并恢复；
- * 4. 多实例租约和异常状态处理。</p>
+ * <p>这里不编排业务节点，只负责创建、恢复、人工输入和多实例执行租约。</p>
  */
 @Service
-@RequiredArgsConstructor
 public class ExpenseAgentService {
+
+    private static final Set<String> AUTO_RECOVERABLE = Set.of(
+            "CREATED",
+            "RUNNING",
+            "RETRYING",
+            "UNKNOWN"
+    );
 
     private final JdbcTemplate jdbcTemplate;
     private final CompiledGraph expenseCompiledGraph;
     private final TaskStateStore taskStateStore;
     private final TaskLeaseService taskLeaseService;
-
-    @Qualifier("graphExecutor")
     private final Executor graphExecutor;
+
+    public ExpenseAgentService(
+            JdbcTemplate jdbcTemplate,
+            CompiledGraph expenseCompiledGraph,
+            TaskStateStore taskStateStore,
+            TaskLeaseService taskLeaseService,
+            @Qualifier("graphExecutor") Executor graphExecutor) {
+        this.jdbcTemplate = jdbcTemplate;
+        this.expenseCompiledGraph = expenseCompiledGraph;
+        this.taskStateStore = taskStateStore;
+        this.taskLeaseService = taskLeaseService;
+        this.graphExecutor = graphExecutor;
+    }
 
     public long start(String userId, String requestText) {
         long taskId = positiveId();
@@ -46,38 +59,109 @@ public class ExpenseAgentService {
                 values (?,?,?,'CREATED',?,0,0)
                 """, taskId, userId, requestText, threadId);
 
-        Map<String, Object> initialState = Map.of(
-                TASK_ID, taskId,
-                USER_ID, userId,
-                REQUEST_TEXT, requestText,
-                TASK_STATUS, "CREATED"
-        );
+        graphExecutor.execute(() -> execute(
+                taskId,
+                initialState(taskId, userId, requestText),
+                config(threadId)
+        ));
 
-        RunnableConfig config = RunnableConfig.builder()
-                .threadId(threadId)
-                .build();
-
-        graphExecutor.execute(() -> execute(taskId, initialState, config));
         return taskId;
     }
 
     /**
-     * 恢复 crash/retry 场景：input=null，Graph 从 MySQL Saver 最新 checkpoint 继续。
+     * 仅用于机器故障恢复。
+     *
+     * <p>WAITING_INPUT / WAITING_MATERIAL / WAITING_APPROVAL 绝不能通过这个接口
+     * “强行继续”，否则可能把缺失的人类决策当成默认值。它们必须走专用 Human API。</p>
      */
     public void resume(long taskId) {
-        RunnableConfig config = config(taskId);
-        graphExecutor.execute(() -> execute(taskId, null, config));
+        TaskStateStore.TaskSnapshot task = taskStateStore.require(taskId);
+
+        if (!AUTO_RECOVERABLE.contains(task.status())) {
+            throw new IllegalStateException(
+                    "当前状态不允许自动恢复: " + task.status()
+                            + "，必须走对应的补件/澄清/审批接口");
+        }
+
+        graphExecutor.execute(() -> {
+            if ("CREATED".equals(task.status())) {
+                // 解决“业务任务已 INSERT，但 JVM 在首次 graph.stream 前崩溃”的窗口。
+                execute(
+                        taskId,
+                        initialState(taskId, task.userId(), task.requestText()),
+                        config(task.threadId())
+                );
+            }
+            else {
+                execute(taskId, null, config(task.threadId()));
+            }
+        });
     }
 
-    /**
-     * Human-in-the-loop 恢复：先把人工输入写进 checkpoint state，再从中断点继续。
-     */
-    public void resume(long taskId, Map<String, Object> statePatch) {
-        RunnableConfig config = config(taskId);
+    public void resumeClarification(
+            long taskId,
+            Map<String, Object> statePatch) {
+        resumeHuman(
+                taskId,
+                "WAITING_INPUT",
+                "requestClarification",
+                statePatch
+        );
+    }
+
+    public void resumeSupplement(
+            long taskId,
+            Map<String, Object> statePatch) {
+        resumeHuman(
+                taskId,
+                "WAITING_MATERIAL",
+                "requestSupplement",
+                statePatch
+        );
+    }
+
+    public void resumeApproval(
+            long taskId,
+            String operationType,
+            Map<String, Object> statePatch) {
+
+        String expectedNode = switch (operationType) {
+            case "POLICY_EXCEPTION" -> "humanApproval";
+            case "SUBMIT_REPORT" -> "submitApproval";
+            default -> throw new IllegalArgumentException(
+                    "未知审批类型: " + operationType);
+        };
+
+        resumeHuman(
+                taskId,
+                "WAITING_APPROVAL",
+                expectedNode,
+                statePatch
+        );
+    }
+
+    private void resumeHuman(
+            long taskId,
+            String expectedStatus,
+            String expectedNode,
+            Map<String, Object> statePatch) {
+
+        TaskStateStore.TaskSnapshot task = taskStateStore.require(taskId);
+
+        if (!expectedStatus.equals(task.status())
+                || !expectedNode.equals(task.currentNode())) {
+            throw new IllegalStateException(
+                    "任务不在预期 Human-in-the-loop 中断点: status="
+                            + task.status() + ", node=" + task.currentNode());
+        }
+
+        RunnableConfig config = config(task.threadId());
+
         graphExecutor.execute(() -> {
             if (!taskLeaseService.tryAcquire(taskId)) {
                 return;
             }
+
             try {
                 RunnableConfig updated = expenseCompiledGraph.updateState(
                         config,
@@ -87,7 +171,7 @@ public class ExpenseAgentService {
                 expenseCompiledGraph.stream(null, updated).blockLast();
             }
             catch (Throwable ex) {
-                taskStateStore.markError(taskId, "graph-resume", ex);
+                taskStateStore.markError(taskId, "graph-human-resume", ex);
             }
             finally {
                 taskLeaseService.release(taskId);
@@ -99,6 +183,7 @@ public class ExpenseAgentService {
             long taskId,
             Map<String, Object> input,
             RunnableConfig config) {
+
         if (!taskLeaseService.tryAcquire(taskId)) {
             return;
         }
@@ -114,9 +199,25 @@ public class ExpenseAgentService {
         }
     }
 
+    private Map<String, Object> initialState(
+            long taskId,
+            String userId,
+            String requestText) {
+        return Map.of(
+                TASK_ID, taskId,
+                USER_ID, userId,
+                REQUEST_TEXT, requestText,
+                TASK_STATUS, "CREATED"
+        );
+    }
+
     private RunnableConfig config(long taskId) {
+        return config(taskStateStore.threadId(taskId));
+    }
+
+    private RunnableConfig config(String threadId) {
         return RunnableConfig.builder()
-                .threadId(taskStateStore.threadId(taskId))
+                .threadId(threadId)
                 .build();
     }
 

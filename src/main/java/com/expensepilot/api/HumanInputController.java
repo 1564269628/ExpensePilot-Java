@@ -21,7 +21,7 @@ public class HumanInputController {
             @PathVariable long taskId,
             @Valid @RequestBody ClarificationInput input) {
 
-        expenseAgentService.resume(taskId, Map.of(
+        expenseAgentService.resumeClarification(taskId, Map.of(
                 "tripStart", input.startDate().toString(),
                 "tripEnd", input.endDate().toString(),
                 "tripCity", input.city()
@@ -38,7 +38,7 @@ public class HumanInputController {
             @PathVariable long taskId,
             @Valid @RequestBody SupplementRequest input) {
 
-        expenseAgentService.resume(taskId, Map.of(
+        expenseAgentService.resumeSupplement(taskId, Map.of(
                 "supplementalMaterials", input.materialRefs()
         ));
 
