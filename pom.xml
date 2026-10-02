@@ -13,7 +13,6 @@
     <spring-boot.version>3.5.8</spring-boot.version>
     <spring-ai.version>1.1.2</spring-ai.version>
     <spring-ai-alibaba.version>1.1.2.2</spring-ai-alibaba.version>
-    <mybatis-plus.version>3.5.12</mybatis-plus.version>
     <redisson.version>3.42.0</redisson.version>
     <rocketmq-spring.version>2.3.2</rocketmq-spring.version>
   </properties>
@@ -88,11 +87,6 @@
       <artifactId>spring-ai-alibaba-starter-graph-observation</artifactId>
     </dependency>
 
-    <dependency>
-      <groupId>com.baomidou</groupId>
-      <artifactId>mybatis-plus-spring-boot3-starter</artifactId>
-      <version>${mybatis-plus.version}</version>
-    </dependency>
     <dependency>
       <groupId>com.mysql</groupId>
       <artifactId>mysql-connector-j</artifactId>
