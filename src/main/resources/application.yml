@@ -1,0 +1,57 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: expensepilot-java
+  datasource:
+    url: ${MYSQL_URL:jdbc:mysql://localhost:3306/expensepilot?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai}
+    username: ${MYSQL_USERNAME:root}
+    password: ${MYSQL_PASSWORD:root}
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+  ai:
+    openai:
+      api-key: ${OPENAI_API_KEY:demo-key}
+      base-url: ${OPENAI_BASE_URL:https://api.openai.com}
+      chat:
+        options:
+          model: ${OPENAI_MODEL:gpt-5.6}
+  rocketmq:
+    name-server: ${ROCKETMQ_NAMESRV:localhost:9876}
+    producer:
+      group: expensepilot-producer
+
+expensepilot:
+  tool:
+    default-timeout-ms: 5000
+  recovery:
+    scan-delay-ms: 3000
+    max-retry: 3
+  pools:
+    email:
+      core: 8
+      max: 16
+      queue: 100
+    drive:
+      core: 8
+      max: 16
+      queue: 100
+    travel:
+      core: 8
+      max: 16
+      queue: 100
+
+management:
+  tracing:
+    sampling:
+      probability: 1.0
+  otlp:
+    tracing:
+      endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:http://localhost:4318/v1/traces}
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
