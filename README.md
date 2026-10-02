@@ -78,7 +78,7 @@ Planner 只规划到 `SUBMIT_REPORT`。通知不交给 LLM 规划；报销提交
 所有 `/api/**` 请求使用 Spring Security OAuth2 Resource Server 校验 JWT。
 任务创建时的 `userId` 只取 token `sub`，请求体不能指定其他用户；查询、故障恢复、
 澄清和补件都校验任务 owner。审批接口不接受客户端传入 approver，而是记录当前
-JWT subject，并要求 `SCOPE_expense.approve` 或 `ROLE_EXPENSE_APPROVER`。
+JWT subject，并要求 `SCOPE_expense.approve`。
 
 因此 Graph State 中的用户身份来自受信任 IdP，而不是可伪造的请求参数。
 

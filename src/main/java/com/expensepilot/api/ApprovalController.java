@@ -14,7 +14,7 @@ import java.util.Map;
  * Graph Human-in-the-loop 审批入口。
  *
  * <p>approver 不接受客户端参数，只能取当前 JWT subject；
- * 同时要求 IdP 下发 expense.approve scope 或 EXPENSE_APPROVER 角色。</p>
+ * 同时要求 IdP 下发 expense.approve OAuth scope。</p>
  */
 @RestController
 @RequestMapping("/api/v1/expense-tasks/{taskId}/approval")
@@ -93,8 +93,7 @@ public class ApprovalController {
 
     private String requireApprover() {
         currentUser.requireAnyAuthority(
-                "SCOPE_expense.approve",
-                "ROLE_EXPENSE_APPROVER"
+                "SCOPE_expense.approve"
         );
         return currentUser.userId();
     }

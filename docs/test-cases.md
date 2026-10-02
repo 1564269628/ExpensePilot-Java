@@ -44,6 +44,6 @@
 
 - 政策服务返回 `compliant=false`。
 - Graph 路由到 `humanApproval` 并 `interruptAfter`。
-- 只有具备 `SCOPE_expense.approve` / `ROLE_EXPENSE_APPROVER` 的 JWT 用户可以审批。
+- 只有具备 `SCOPE_expense.approve` 的 JWT 用户可以审批。
 - approve/reject 都必须写入 `approval_record`。
 - 恢复后按人工决定继续到报销草稿或 `REJECTED`。
