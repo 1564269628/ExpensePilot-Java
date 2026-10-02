@@ -1,33 +1,154 @@
 # ExpensePilot 架构说明
 
-## 1. 为什么 Agent 和可靠执行要拆开
+## 1. 总体原则：LLM 负责候选计划，Java/Graph 决定能否执行
 
-LLM 擅长理解“帮我报销上周上海出差”这样的模糊请求，但不适合承担数据库一致性、幂等、并发控制等职责。因此系统分两层：
+ExpensePilot 的主链已经统一为：
 
-- Agent 层：Planner、Replan、条件路由、参数修复。
-- 执行层：Task 状态机、线程池、MCP Gateway、幂等、Checkpoint、租约、Outbox。
+```text
+HTTP API
+  -> Spring AI Structured Output Planner
+  -> PlanValidator
+  -> Spring AI Alibaba StateGraph / CompiledGraph
+  -> MCP Tool Gateway
+  -> 企业真实系统
+```
 
-## 2. Checkpoint 恢复
+Planner 使用 `ChatClient.call().entity(PlanOutput.class)` 生成强类型 `PlanOutput`。
+模型不能直接生成任意工具名，也不能改企业工作流的安全拓扑。
 
-每个关键节点完成后保存 AgentState 快照。JVM 崩溃后 RecoveryWorker 从 MySQL 找到异常任务，读取最新 Checkpoint，再重新获得任务租约并继续执行。
+`PlanValidator` 会把 Planner 生成的 Task DAG 与生产 `StateGraph` 主路径逐项比较。
+因此 DAG 不是“只给人看的假计划”；它必须与真正执行的 Graph 主路径一致。
+补件、人工审批、Replan 属于 Runtime 条件分支，不放进主路径 DAG。
 
-Checkpoint 不等于“把 Java 调用栈保存下来”，而是保存**足够重建下一步执行的业务状态**。
+## 2. Graph-first 工作流
 
-## 3. 副作用不确定状态
+固定拓扑和条件分支都在 `ExpenseGraphConfig` 中声明：
 
-提交接口最危险的场景：
+- `addNode`：一个确定的业务动作；
+- `addEdge`：固定流转；
+- `addConditionalEdges`：材料缺失、政策冲突、审批结果等条件路由；
+- 多条从同一节点发出的边：邮箱 / 网盘 / 差旅并行 fan-out；
+- 多条边汇入 `materialJoin`：fan-in；
+- `interruptAfter`：澄清、补件、政策审批、最终提交审批；
+- `CompiledGraph.updateState`：人工输入写回 checkpoint 后恢复。
 
-1. ExpensePilot 发起 submit；
+不存在第二套 `while/switch` 手写工作流 Runtime。
+
+## 3. Checkpoint 与故障恢复
+
+Checkpoint 使用 Spring AI Alibaba 自带 `MysqlSaver`，而不是业务代码自建快照表。
+
+`threadId` 是 Graph 恢复键：
+
+1. 每次 Graph 执行后，`MysqlSaver` 保存状态与下一执行位置；
+2. JVM / Pod 崩溃后，`RecoveryWorker` 扫描 MySQL 业务任务；
+3. 用同一个 `threadId` 调用 `CompiledGraph.stream(null, config)`；
+4. Graph 从最近 checkpoint 继续，而不是从头重跑。
+
+业务状态 `expense_task` 与 Graph checkpoint 职责不同：
+
+- `expense_task`：业务事实、运营查询、版本 CAS；
+- `MysqlSaver`：工作流控制状态和恢复位置。
+
+## 4. 恢复阶梯
+
+恢复不是无限重试：
+
+1. Planner Structured Output 校验失败：反馈确定性错误，让模型有限次数重新生成；
+2. 查询类 MCP 瞬时失败：ToolGateway 有限指数退避；
+3. 邮箱 / 网盘持续不可用：安全降级为空材料，后续进入人工补件；
+4. Graph / 进程级失败前两次：从 checkpoint 续跑；
+5. 持续失败：换新的 Graph `threadId`，重新经过 Planner 做 Replan；
+6. 恢复预算耗尽：`MANUAL_TAKEOVER`。
+
+差旅、政策这类关键事实不能通过猜测降级。
+
+## 5. 副作用与 UNKNOWN
+
+提交报销、发送通知属于副作用操作。
+
+`SideEffectGuard` 使用：
+
+- 稳定 `idempotencyKey`；
+- 稳定 `requestId`；
+- MySQL 唯一索引；
+- `RUNNING / SUCCEEDED / FAILED / UNKNOWN` 执行记录。
+
+最危险的场景是：
+
+1. ExpensePilot 发出 submit；
 2. 外部报销系统已经创建单据；
-3. HTTP 响应在网络中丢失；
-4. 本系统只看到 timeout。
+3. 响应在网络中丢失；
+4. 本系统只看到异常。
 
-此时不能直接 retry，否则可能重复报销。正确做法是将执行记录置为 UNKNOWN，再使用稳定 requestId / idempotencyKey 到外部系统查询；查到业务单号就回填成功，明确不存在才允许再次提交。
+此时状态进入 `UNKNOWN`，不能盲目再次 submit。
+系统调用 `query_expense_submission(requestId)` 对账，确认外部结果后再继续。
 
-## 4. 双层并发保护
+## 6. Human-in-the-loop
 
-Redisson 锁负责“减少两个实例一起干活”，DB version CAS 负责“即使锁失效也不允许旧状态覆盖新状态”。锁是优化与协调，数据库才是最终事实源。
+人工决定由两部分组成：
 
-## 5. Outbox
+- Graph：负责中断和恢复；
+- `approval_record`：负责保存人工事实。
 
-任务状态和 outbox_event 同一个 MySQL 事务写入。Publisher 可以晚一点、重复多次投递，但事件不会因为进程在 commit 后崩溃而永久消失。消费端再通过 eventId 幂等抵抗重复消息。
+`approve/reject` 都使用 upsert，因此即使政策异常审批没有预先创建 PENDING 记录，
+最终的人类决定也一定可审计。
+
+最终 `SUBMIT_REPORT` 除了 Graph 审批分支外，ToolGateway 还会再次读取
+`approval_record`，形成“工作流层 + 副作用网关层”双重保护。
+
+## 7. 多实例并发
+
+Redisson 锁使用 watchdog 自动续租，负责减少多个实例同时执行同一任务。
+
+MySQL `version` CAS 是最终保护：
+
+```sql
+update expense_task
+set status=?, current_node=?, version=version+1
+where id=? and version=?
+```
+
+即使 Redis 锁发生租约边界问题，旧执行者也不能覆盖新执行者的业务状态。
+
+## 8. Transactional Outbox 与 RocketMQ
+
+报销提交成功后：
+
+1. 在一个 MySQL 本地事务中更新任务状态并插入 `outbox_event`；
+2. `OutboxPublisher` 至少一次投递 RocketMQ；
+3. 消息 Envelope 保留原始 `eventId`；
+4. Consumer 调用真实 `send_notification` MCP Tool；
+5. 外部通知成功后才写 `consumed_event`。
+
+所以不会用 `message.hashCode()` 伪造 eventId，也不会在通知真正成功前提前确认消费。
+
+## 9. 生产 MCP
+
+邮箱、网盘、差旅、报销分别使用独立 Streamable HTTP transport，可配置独立 Bearer Token。
+
+主链没有 Mock fallback。启动时会：
+
+1. 初始化真实 MCP Client；
+2. 拉取工具列表；
+3. `RequiredMcpToolsVerifier` 检查完整 Tool 契约。
+
+完整输入输出协议见 `docs/production-mcp-contract.md`。
+
+## 10. MySQL、Redis 与可观测
+
+MySQL 是事实源，Flyway 管理业务表版本。
+
+Redis 只缓存热点任务视图：
+
+```text
+GET task
+  -> Redis hit
+  -> miss -> MySQL
+  -> 回填短 TTL
+```
+
+状态迁移会主动失效缓存，Redis 故障时直接回退 MySQL。
+
+Graph 使用 Spring AI Alibaba Graph Observation，MCP ToolGateway 通过 Micrometer
+Observation 建立 Tool span，最终由 OpenTelemetry/OTLP 输出。
