@@ -1,5 +1,6 @@
 package com.expensepilot.outbox;
 
+import com.expensepilot.cache.TaskContextCache;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -14,7 +15,7 @@ import java.util.UUID;
  * Transactional Outbox。
  *
  * <p>任务成功状态和待发布事件在同一个 MySQL 事务里提交。
- * 状态更新使用 version CAS，避免并发执行者覆盖彼此结果。</p>
+ * 状态更新使用 version CAS，成功后失效 Redis 热点视图。</p>
  */
 @Service
 @RequiredArgsConstructor
@@ -22,6 +23,7 @@ public class OutboxService {
 
     private final JdbcTemplate jdbcTemplate;
     private final ObjectMapper objectMapper;
+    private final TaskContextCache taskContextCache;
 
     @Transactional
     public String markTaskSucceededAndAppendEvent(
@@ -65,21 +67,12 @@ public class OutboxService {
 
             jdbcTemplate.update("""
                     insert into outbox_event(
-                        event_id,
-                        aggregate_id,
-                        event_type,
-                        payload_json,
-                        status,
-                        retry_count,
-                        next_retry_at
+                        event_id,aggregate_id,event_type,payload_json,
+                        status,retry_count,next_retry_at
                     )
                     values (
-                        ?,?,
-                        'EXPENSE_SUBMITTED',
-                        CAST(? AS JSON),
-                        'PENDING',
-                        0,
-                        now()
+                        ?,?,'EXPENSE_SUBMITTED',cast(? as json),
+                        'PENDING',0,now()
                     )
                     """,
                     eventId,
@@ -87,6 +80,7 @@ public class OutboxService {
                     payload
             );
 
+            taskContextCache.evict(taskId);
             return eventId;
         }
         catch (JsonProcessingException ex) {
