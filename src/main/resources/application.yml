@@ -4,24 +4,20 @@ server:
 spring:
   application:
     name: expensepilot-java
-
   datasource:
     url: ${MYSQL_URL:jdbc:mysql://localhost:3306/expensepilot?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai}
     username: ${MYSQL_USERNAME:root}
     password: ${MYSQL_PASSWORD:root}
-
   data:
     redis:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
       timeout: 2s
-
   flyway:
     enabled: true
     locations: classpath:db/migration
     validate-on-migrate: true
     baseline-on-migrate: false
-
   ai:
     openai:
       api-key: ${OPENAI_API_KEY}
@@ -30,7 +26,6 @@ spring:
         options:
           model: ${OPENAI_MODEL}
           temperature: 0.1
-
     mcp:
       client:
         enabled: true
@@ -38,7 +33,7 @@ spring:
         version: 1.0.0
         type: SYNC
         initialized: true
-        request-timeout: 10s
+        request-timeout: ${MCP_REQUEST_TIMEOUT:5s}
         toolcallback:
           enabled: true
 
@@ -47,15 +42,14 @@ expensepilot:
     zone-id: ${BUSINESS_ZONE_ID:Asia/Shanghai}
     max-attempts: 3
   tool:
-    default-timeout-ms: 5000
+    max-read-retries: 3
+    read-retry-backoff-ms: 200
   recovery:
     scan-delay-ms: 3000
-    max-retry: 3
   pools:
     email: { core: 8, max: 16, queue: 100 }
     drive: { core: 8, max: 16, queue: 100 }
     travel: { core: 8, max: 16, queue: 100 }
-
   mcp:
     servers:
       email:

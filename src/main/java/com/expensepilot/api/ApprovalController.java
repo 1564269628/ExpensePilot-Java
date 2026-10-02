@@ -25,6 +25,12 @@ public class ApprovalController {
             @RequestParam String approver,
             @RequestParam(defaultValue = "") String comment) {
 
+        // 先验证任务确实停在对应中断点，再落审批记录，防止“提前审批”污染审计表。
+        expenseAgentService.assertApprovalReady(
+                taskId,
+                operationType
+        );
+
         approvalService.approve(
                 taskId,
                 operationType,
@@ -52,6 +58,11 @@ public class ApprovalController {
             @RequestParam String approver,
             @RequestParam(defaultValue = "") String comment) {
 
+        expenseAgentService.assertApprovalReady(
+                taskId,
+                operationType
+        );
+
         approvalService.reject(
                 taskId,
                 operationType,
@@ -76,17 +87,17 @@ public class ApprovalController {
             String operationType,
             boolean approved,
             String approver) {
-
         Map<String, Object> patch = new LinkedHashMap<>();
         patch.put("lastApprover", approver);
 
         switch (operationType) {
-            case "POLICY_EXCEPTION" -> patch.put("policyApproved", approved);
-            case "SUBMIT_REPORT" -> patch.put("submitApproved", approved);
+            case "POLICY_EXCEPTION" ->
+                    patch.put("policyApproved", approved);
+            case "SUBMIT_REPORT" ->
+                    patch.put("submitApproved", approved);
             default -> throw new IllegalArgumentException(
                     "未知审批类型: " + operationType);
         }
-
         return patch;
     }
 }
