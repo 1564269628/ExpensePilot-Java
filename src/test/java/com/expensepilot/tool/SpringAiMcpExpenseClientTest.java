@@ -35,8 +35,7 @@ class SpringAiMcpExpenseClientTest {
                         "data", Map.of(
                                 "messages",
                                 List.of(Map.of("messageId", "m1"))
-                        ),
-                        "externalBusinessNo", null
+                        )
                 ))
         );
         when(provider.getToolCallbacks())
@@ -113,8 +112,7 @@ class SpringAiMcpExpenseClientTest {
                                 "success", true,
                                 "code", "OK",
                                 "message", "success",
-                                "data", Map.of(),
-                                "externalBusinessNo", null
+                                "data", Map.of()
                         )
                 )
         );
