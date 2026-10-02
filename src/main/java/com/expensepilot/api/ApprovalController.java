@@ -7,14 +7,15 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
  * Graph Human-in-the-loop 审批入口。
  *
- * <p>approver 不接受客户端参数，只能取当前 JWT subject；
- * 同时要求 IdP 下发 expense.approve OAuth scope。</p>
+ * <p>审批人只能取已验证 JWT subject，并要求 expense.approve OAuth scope。</p>
+ *
+ * <p>最终决定先写 MySQL，再尝试恢复 Graph。即使恢复投递时线程池满或进程崩溃，
+ * RecoveryWorker 也能从 approval_record 重新发现并继续。</p>
  */
 @RestController
 @RequestMapping("/api/v1/expense-tasks/{taskId}/approval")
@@ -33,11 +34,8 @@ public class ApprovalController {
 
         String approver = requireApprover();
 
-        expenseAgentService.assertApprovalReady(
-                taskId,
-                operationType
-        );
-
+        // 没有 Graph 预创建的 PENDING 记录时，这里会失败；
+        // 因此不能提前审批一个还没进入审批节点的任务。
         approvalService.approve(
                 taskId,
                 operationType,
@@ -48,7 +46,8 @@ public class ApprovalController {
         expenseAgentService.resumeApproval(
                 taskId,
                 operationType,
-                approvalPatch(operationType, true, approver)
+                true,
+                approver
         );
 
         return ResponseEntity.ok(Map.of(
@@ -66,11 +65,6 @@ public class ApprovalController {
 
         String approver = requireApprover();
 
-        expenseAgentService.assertApprovalReady(
-                taskId,
-                operationType
-        );
-
         approvalService.reject(
                 taskId,
                 operationType,
@@ -81,7 +75,8 @@ public class ApprovalController {
         expenseAgentService.resumeApproval(
                 taskId,
                 operationType,
-                approvalPatch(operationType, false, approver)
+                false,
+                approver
         );
 
         return ResponseEntity.ok(Map.of(
@@ -95,26 +90,7 @@ public class ApprovalController {
         currentUser.requireAnyAuthority(
                 "SCOPE_expense.approve"
         );
+
         return currentUser.userId();
-    }
-
-    private Map<String, Object> approvalPatch(
-            String operationType,
-            boolean approved,
-            String approver) {
-
-        Map<String, Object> patch = new LinkedHashMap<>();
-        patch.put("lastApprover", approver);
-
-        switch (operationType) {
-            case "POLICY_EXCEPTION" ->
-                    patch.put("policyApproved", approved);
-            case "SUBMIT_REPORT" ->
-                    patch.put("submitApproved", approved);
-            default -> throw new IllegalArgumentException(
-                    "未知审批类型: " + operationType);
-        }
-
-        return patch;
     }
 }

@@ -5,11 +5,16 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Objects;
+
 /**
  * 人工审批事实服务。
  *
- * <p>Graph 负责“停在哪里等人”，approval_record 保存唯一的人类决定。
- * 审批记录必须先进入 PENDING，最终 APPROVED/REJECTED 只能 CAS 一次。</p>
+ * <p>Graph 进入审批中断点前先创建 PENDING。最终 APPROVED/REJECTED
+ * 使用条件更新，只允许一个审批决定获胜。</p>
+ *
+ * <p>相同审批人重试相同决定是幂等的，适配 HTTP 响应丢失后的客户端重试；
+ * 不同决定或不同审批人不能覆盖已经落库的最终事实。</p>
  */
 @Service
 @RequiredArgsConstructor
@@ -19,7 +24,11 @@ public class ApprovalService {
 
     public void request(long taskId, String operationType) {
         jdbcTemplate.update("""
-                insert into approval_record(task_id,operation_type,status)
+                insert into approval_record(
+                    task_id,
+                    operation_type,
+                    status
+                )
                 values (?,?,'PENDING')
                 on duplicate key update status=status
                 """,
@@ -40,6 +49,7 @@ public class ApprovalService {
                 taskId,
                 operationType
         );
+
         return count != null && count > 0;
     }
 
@@ -49,6 +59,7 @@ public class ApprovalService {
             String operationType,
             String approver,
             String comment) {
+
         decideOnce(
                 taskId,
                 operationType,
@@ -64,6 +75,7 @@ public class ApprovalService {
             String operationType,
             String approver,
             String comment) {
+
         decideOnce(
                 taskId,
                 operationType,
@@ -73,12 +85,6 @@ public class ApprovalService {
         );
     }
 
-    /**
-     * 只有 PENDING 能进入最终状态。
-     *
-     * <p>两个审批人并发操作时，数据库条件更新只允许一个 affectedRows=1；
-     * 后到的请求直接返回冲突，不能覆盖前一个人的决定。</p>
-     */
     private void decideOnce(
             long taskId,
             String operationType,
@@ -107,21 +113,42 @@ public class ApprovalService {
             return;
         }
 
-        String existing = jdbcTemplate.query("""
-                select status
+        ExistingDecision existing = jdbcTemplate.query("""
+                select status,approver
                   from approval_record
-                 where task_id=? and operation_type=?
+                 where task_id=?
+                   and operation_type=?
                 """,
-                (rs, i) -> rs.getString("status"),
+                (rs, i) -> new ExistingDecision(
+                        rs.getString("status"),
+                        rs.getString("approver")
+                ),
                 taskId,
                 operationType
-        ).stream().findFirst().orElse("MISSING");
+        ).stream().findFirst().orElse(null);
+
+        // 客户端可能没有收到第一次 200，又用同一个身份重试相同决定。
+        if (existing != null
+                && decision.equals(existing.status())
+                && Objects.equals(
+                        approver,
+                        existing.approver()
+                )) {
+            return;
+        }
 
         throw new IllegalStateException(
                 "审批已被处理或审批记录不存在: operationType="
                         + operationType
                         + ", currentStatus="
-                        + existing
+                        + (existing == null
+                            ? "MISSING"
+                            : existing.status())
         );
     }
+
+    private record ExistingDecision(
+            String status,
+            String approver
+    ) {}
 }

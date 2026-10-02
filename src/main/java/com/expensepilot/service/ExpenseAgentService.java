@@ -243,35 +243,55 @@ public class ExpenseAgentService {
         ));
     }
 
-    public void assertApprovalReady(long taskId, String operationType) {
-        TaskStateStore.TaskSnapshot task = taskStateStore.require(taskId);
-        String expectedNode = approvalNode(operationType);
-        if (!"WAITING_APPROVAL".equals(task.status())
-                || !expectedNode.equals(task.currentNode())) {
-            throw new IllegalStateException(
-                    "任务当前不允许该审批: operationType=" + operationType
-                            + ", status=" + task.status()
-                            + ", node=" + task.currentNode());
-        }
+    public void resumeClarification(
+            long taskId,
+            Map<String, Object> patch) {
+
+        resumeHuman(
+                taskId,
+                "WAITING_INPUT",
+                "requestClarification",
+                patch,
+                false
+        );
     }
 
-    public void resumeClarification(long taskId, Map<String, Object> patch) {
-        resumeHuman(taskId, "WAITING_INPUT", "requestClarification", patch);
+    public void resumeSupplement(
+            long taskId,
+            Map<String, Object> patch) {
+
+        resumeHuman(
+                taskId,
+                "WAITING_MATERIAL",
+                "requestSupplement",
+                patch,
+                false
+        );
     }
 
-    public void resumeSupplement(long taskId, Map<String, Object> patch) {
-        resumeHuman(taskId, "WAITING_MATERIAL", "requestSupplement", patch);
-    }
-
+    /**
+     * 审批结果已经持久化在 approval_record，所以恢复投递本身可以安全重试。
+     * graphExecutor 饱和时不丢决定，由 RecoveryWorker 继续扫描。
+     */
     public void resumeApproval(
             long taskId,
             String operationType,
-            Map<String, Object> patch) {
+            boolean approved,
+            String approver) {
+
+        Map<String, Object> patch =
+                approvalPatch(
+                        operationType,
+                        approved,
+                        approver
+                );
+
         resumeHuman(
                 taskId,
                 "WAITING_APPROVAL",
                 approvalNode(operationType),
-                patch
+                patch,
+                true
         );
     }
 
@@ -279,19 +299,26 @@ public class ExpenseAgentService {
             long taskId,
             String expectedStatus,
             String expectedNode,
-            Map<String, Object> statePatch) {
+            Map<String, Object> statePatch,
+            boolean inputPersisted) {
 
         TaskStateStore.TaskSnapshot task = taskStateStore.require(taskId);
         if (!expectedStatus.equals(task.status())
                 || !expectedNode.equals(task.currentNode())) {
+
+            // 审批决定是持久化事实：相同请求重试时 Graph 可能已经被第一次请求推进。
+            if (inputPersisted) {
+                return;
+            }
+
             throw new IllegalStateException(
                     "任务不在预期 Human-in-the-loop 中断点: status="
-                            + task.status() + ", node=" + task.currentNode());
+                            + task.status()
+                            + ", node="
+                            + task.currentNode());
         }
 
-        // Human-in-the-loop 输入不能静默丢弃。线程池满时让 TaskRejectedException
-        // 冒泡到 API，由 ControllerAdvice 返回 503，客户端可以明确重试。
-        graphExecutor.execute(() -> {
+        Runnable resumeAction = () -> {
             if (!taskLeaseService.tryAcquire(taskId)) {
                 return;
             }
@@ -331,11 +358,49 @@ public class ExpenseAgentService {
             finally {
                 taskLeaseService.release(taskId);
             }
-        });
+        };
+
+        if (inputPersisted) {
+            // 审批决定已在 MySQL，可由 RecoveryWorker 重新发现。
+            scheduleRecoverable(resumeAction);
+        }
+        else {
+            // 澄清/补件 patch 尚未持久化，不能静默吞掉线程池拒绝。
+            // 让 TaskRejectedException 冒泡为 503，客户端明确重试。
+            graphExecutor.execute(resumeAction);
+        }
+    }
+
+    private Map<String, Object> approvalPatch(
+            String operationType,
+            boolean approved,
+            String approver) {
+
+        Map<String, Object> patch =
+                new java.util.LinkedHashMap<>();
+
+        patch.put("lastApprover", approver);
+
+        switch (operationType) {
+            case "POLICY_EXCEPTION" ->
+                    patch.put(
+                            "policyApproved",
+                            approved
+                    );
+            case "SUBMIT_REPORT" ->
+                    patch.put(
+                            "submitApproved",
+                            approved
+                    );
+            default -> throw new IllegalArgumentException(
+                    "未知审批类型: " + operationType);
+        }
+
+        return patch;
     }
 
     /**
-     * 创建/机器恢复/Replan 都有 MySQL 状态可重新发现。
+     * 创建/机器恢复/Replan/已持久化审批都有 MySQL 状态可重新发现。
      * 如果 graphExecutor 饱和，保持当前可恢复状态，由 RecoveryWorker 后续再次调度。
      */
     private void scheduleRecoverable(Runnable runnable) {

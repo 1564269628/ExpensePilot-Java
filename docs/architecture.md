@@ -105,6 +105,11 @@ Graph 进入 `humanApproval` / `submitApproval` 时先创建 `PENDING` 审批记
 最终 `APPROVED/REJECTED` 使用条件更新 `where status='PENDING'`，所以两个审批人
 并发点击时只有一个决定能成功，后到请求不能覆盖前一个人的决定。
 
+相同审批人重试相同决定是幂等的。审批事实先提交 MySQL，再投递 Graph resume；如果
+线程池饱和或 JVM 恰好在两者之间崩溃，`RecoveryWorker` 会扫描
+`WAITING_APPROVAL + APPROVED/REJECTED` 的组合并重新提交状态 patch，因此不会出现
+“审批已成功但工作流永久卡住”的窗口。
+
 Human resume 在进入线程池前会做一次快速状态检查，真正拿到 Redisson 锁后还会再次读取
 MySQL 的 `status/current_node`。这样排队期间即使另一个人工操作已经推进 Graph，
 旧的 state patch 也不会写进后续 checkpoint。
