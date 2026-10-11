@@ -67,6 +67,28 @@ def wait_for_state(task_id, desired, seconds=220):
     raise AssertionError("Timed out waiting for " + str(desired) + ", final=" + str(last))
 
 
+def wait_after_approval(task_id, previous_node, seconds=180):
+    """Do not accept the same stale WAITING_APPROVAL snapshot immediately."""
+    deadline = time.monotonic() + seconds
+    last = None
+    while time.monotonic() < deadline:
+        status, snapshot = get("/api/v1/expense-tasks/" + str(task_id))
+        assert status == 200, (status, snapshot)
+        current = (snapshot["status"], snapshot.get("currentNode"))
+        if current != last:
+            print("task", task_id, "post-approval transition", current, flush=True)
+            last = current
+        if snapshot["status"] == "SUCCEEDED":
+            return snapshot
+        if snapshot["status"] == "WAITING_APPROVAL" and (
+                snapshot.get("currentNode") != previous_node):
+            return snapshot
+        if snapshot["status"] in {"REJECTED", "MANUAL_TAKEOVER"}:
+            raise AssertionError("Unexpected terminal state after approval: " + str(snapshot))
+        time.sleep(2)
+    raise AssertionError("Approval did not advance the Graph: " + str(last))
+
+
 def main():
     status, health = get("/actuator/health")
     check(status == 200 and health.get("status") == "UP",
@@ -224,12 +246,13 @@ def main():
                          {"materialRefs": refs})
         check(status == 202, "Supplement API resumes Graph from checkpoint")
         current = wait_for_state(task_id, {"WAITING_APPROVAL", "SUCCEEDED"})
-    for _ in range(2):
+    for _ in range(3):
         if current["status"] == "SUCCEEDED":
             break
         check(current["status"] == "WAITING_APPROVAL",
               "Workflow stops at explicit human approval")
-        operation = ("POLICY_EXCEPTION" if current.get("currentNode")
+        previous_node = current.get("currentNode")
+        operation = ("POLICY_EXCEPTION" if previous_node
                      == "humanApproval" else "SUBMIT_REPORT")
         status, decided = post(
             "/api/v1/expense-tasks/" + str(task_id)
@@ -237,7 +260,7 @@ def main():
             + "&comment=verified-local-workflow")
         check(status == 200 and decided.get("status") == "APPROVED",
               "Approval decision persisted: " + operation)
-        current = wait_for_state(task_id, {"WAITING_APPROVAL", "SUCCEEDED"})
+        current = wait_after_approval(task_id, previous_node)
     check(current["status"] == "SUCCEEDED", "Graph and local expense submission succeeded")
 
     status, details = get("/api/v1/local/tasks/" + task_id + "/details")
