@@ -98,6 +98,13 @@ services:
       EXPENSEPILOT_LOCAL_UPLOAD_DIR: /app/data/uploads
     ports:
       - "127.0.0.1:8080:8080"
+    # 'Started' means the JVM process exists; only this check means HTTP is ready.
+    healthcheck:
+      test: ["CMD", "java", "-cp", "/app/healthcheck", "ExpensePilotHealthProbe"]
+      interval: 10s
+      timeout: 8s
+      start_period: 75s
+      retries: 18
     volumes:
       - uploads:/app/data/uploads
     restart: unless-stopped
