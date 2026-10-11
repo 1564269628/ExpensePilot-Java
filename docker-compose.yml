@@ -1,42 +1,94 @@
+name: expensepilot
+
+# Windows 10/11 + Docker Desktop Linux containers.
+# Local profile is SINGLE USER and should be bound to loopback only.
 services:
   mysql:
     image: mysql:8.0
     environment:
-      MYSQL_ROOT_PASSWORD: root
+      MYSQL_ROOT_PASSWORD: expensepilot-local-root
       MYSQL_DATABASE: expensepilot
-    ports:
-      - "3306:3306"
+      MYSQL_USER: expensepilot
+      MYSQL_PASSWORD: expensepilot-local-password
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+      start_period: 15s
     volumes:
       - mysql-data:/var/lib/mysql
+    restart: unless-stopped
 
   redis:
     image: redis:7.2-alpine
-    ports:
-      - "6379:6379"
+    command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
 
   rocketmq-namesrv:
     image: apache/rocketmq:5.3.1
     command: sh mqnamesrv
-    ports:
-      - "9876:9876"
+    environment:
+      JAVA_OPT_EXT: "-Xms256m -Xmx256m"
+    restart: unless-stopped
 
   rocketmq-broker:
     image: apache/rocketmq:5.3.1
+    command: sh mqbroker -n rocketmq-namesrv:9876 -c /home/rocketmq/conf/broker-local.conf
     depends_on:
-      - rocketmq-namesrv
+      rocketmq-namesrv:
+        condition: service_started
     environment:
       NAMESRV_ADDR: rocketmq-namesrv:9876
-    command: sh mqbroker -n rocketmq-namesrv:9876
-    ports:
-      - "10911:10911"
+      JAVA_OPT_EXT: "-Xms512m -Xmx512m"
+    volumes:
+      - ./ops/rocketmq-broker.conf:/home/rocketmq/conf/broker-local.conf:ro
+      - rocketmq-store:/home/rocketmq/store
+    restart: unless-stopped
 
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.111.0
     command: ["--config=/etc/otelcol-contrib/config.yaml"]
     volumes:
       - ./ops/otel-collector.yaml:/etc/otelcol-contrib/config.yaml:ro
+    restart: unless-stopped
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rocketmq-broker:
+        condition: service_started
+    environment:
+      SPRING_PROFILES_ACTIVE: local
+      MYSQL_URL: "jdbc:mysql://mysql:3306/expensepilot?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false"
+      MYSQL_USERNAME: expensepilot
+      MYSQL_PASSWORD: expensepilot-local-password
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      ROCKETMQ_NAMESRV: rocketmq-namesrv:9876
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318/v1/traces
+      EXPENSEPILOT_LOCAL_UPLOAD_DIR: /app/data/uploads
     ports:
-      - "4318:4318"
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - uploads:/app/data/uploads
+    restart: unless-stopped
 
 volumes:
   mysql-data:
+  redis-data:
+  rocketmq-store:
+  uploads:
