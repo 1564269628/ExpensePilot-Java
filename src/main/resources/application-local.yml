@@ -1,8 +1,9 @@
-# Local development settings. Supply a Groq key via GROQ_API_KEY.
+# Local Groq profile. Base64 is encoding, NOT secret encryption.
+# GitHub push protection blocks even Base64-encoded live API keys.
+# On first use, set GROQ_API_KEY_BASE64 (or GROQ_API_KEY) locally.
 spring:
   ai:
     openai:
-      api-key: ${GROQ_API_KEY:}
       base-url: https://api.groq.com/openai/v1
       chat:
         options:
@@ -11,6 +12,9 @@ spring:
     mcp:
       client:
         enabled: false
+
 expensepilot:
   local:
     enabled: true
+  groq:
+    api-key-base64: ${GROQ_API_KEY_BASE64:}
