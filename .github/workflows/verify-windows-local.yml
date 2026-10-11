@@ -10,6 +10,30 @@ permissions:
   contents: read
 
 jobs:
+  rocketmq-boot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 9
+    steps:
+      - uses: actions/checkout@v4
+      - name: Boot RocketMQ NameServer and Broker
+        run: |
+          docker compose up -d rocketmq-namesrv rocketmq-broker
+          sleep 18
+      - name: Inspect native RocketMQ broker logs and container state
+        shell: bash
+        run: |
+          docker compose ps -a
+          broker_id="$(docker compose ps -aq rocketmq-broker)"
+          docker inspect "$broker_id" --format '{{.State.Status}} exit={{.State.ExitCode}} restartCount={{.RestartCount}}'
+          docker cp "$broker_id:/home/rocketmq/logs/rocketmqlogs/broker.log" /tmp/expensepilot-broker.log || true
+          if test -f /tmp/expensepilot-broker.log; then
+            tail -n 140 /tmp/expensepilot-broker.log
+          fi
+          docker compose logs --no-color --tail 90 rocketmq-broker rocketmq-namesrv
+          test "$(docker inspect "$broker_id" --format '{{.State.Running}}')" = true
+      - name: Clean up
+        if: always()
+        run: docker compose down -v --remove-orphans
   groq-direct:
     name: Direct real Groq API probe
     runs-on: ubuntu-latest
