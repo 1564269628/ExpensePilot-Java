@@ -60,7 +60,8 @@ jobs:
         if: failure()
         run: |
           docker compose ps
-          docker compose logs --no-color --tail 150 app mysql redis rocketmq-namesrv rocketmq-broker
+          docker compose logs --no-color --tail 400 app | sed -E 's/gsk_[A-Za-z0-9_-]+/[REDACTED]/g'
+          docker compose logs --no-color --tail 50 mysql redis rocketmq-namesrv rocketmq-broker
       - name: Stop test stack
         if: always()
         run: docker compose down -v --remove-orphans
