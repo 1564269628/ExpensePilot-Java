@@ -4,7 +4,8 @@
 spring:
   ai:
     openai:
-      base-url: https://api.groq.com/openai/v1
+      # Spring AI appends /v1/chat/completions; avoid a duplicated /v1.
+      base-url: https://api.groq.com/openai
       chat:
         options:
           model: qwen/qwen3.8-27b
