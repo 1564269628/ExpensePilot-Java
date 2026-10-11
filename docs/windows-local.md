@@ -1,3 +1,36 @@
+## 浏览器访问 localhost:8080 白屏、一直正在加载
+
+原版本页面样式包含一个会阻塞渲染的 `fonts.googleapis.com` 字体导入。部分国内 Windows 网络无法完成这个请求，可能导致浏览器长时间白屏。现已移除外部字体请求，页面使用 Windows 内置微软雅黑、Segoe UI 等系统字体，离线亦可渲染。
+
+此外，`docker compose up -d` 中出现 `Started` **并不代表**后端 HTTP 已就绪。Docker Compose 中的应用容器现具有 HTTP `/actuator/health` 健康检查，等待 JVM 初始化、Flyway 和依赖服务：
+
+```powershell
+git pull
+docker compose up -d --build --wait --wait-timeout 300
+docker compose ps -a
+```
+
+可在不重新构建、不删除数据库的前提下运行自检脚本：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\ops\check-windows.ps1
+```
+
+脚本会轮询 `http://127.0.0.1:8080/actuator/health`，并检查首页、CSS 和 JavaScript 的 HTTP 响应。如果后端 180 秒内仍未就绪，会打印 `docker compose logs --tail 150 app` 的错误线索。
+
+请优先直接访问 `http://127.0.0.1:8080/`，并按 `Ctrl+Shift+R` 强制刷新浏览器静态资源。不要因为白屏就执行 `docker compose down -v`（会删除数据库等持久化数据）。
+
+### 本地诊断的快速命令
+
+```powershell
+docker compose ps -a
+docker compose logs --tail 150 app
+curl.exe -i --max-time 10 http://127.0.0.1:8080/actuator/health
+curl.exe -i --max-time 10 http://127.0.0.1:8080/
+```
+
+如果健康检查返回 `UP` 且首页返回 200，说明后端与页面服务正常，可进一步在 Edge 开发者工具（F12）的 Network/Console 中排查浏览器扩展、代理、缓存问题。若健康检查超时，请先提供完整应用日志，不要盲目修改数据库版本；Compose 已固定为 **MySQL 8.0**。
+
 ## Docker 构建在 Maven 下载依赖时卡住（Windows 国内网络）
 
 旧 Dockerfile 包含 `mvn dependency:go-offline`，首次启动会额外下载大量插件依赖，例如 `javassist`。这种 `WARNING` 本身不代表构建失败。现在镜像构建已改为：
