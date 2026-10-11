@@ -1,0 +1,16 @@
+# Local development settings. Supply a Groq key via GROQ_API_KEY.
+spring:
+  ai:
+    openai:
+      api-key: ${GROQ_API_KEY:}
+      base-url: https://api.groq.com/openai/v1
+      chat:
+        options:
+          model: qwen/qwen3.8-27b
+          temperature: 0.1
+    mcp:
+      client:
+        enabled: false
+expensepilot:
+  local:
+    enabled: true
