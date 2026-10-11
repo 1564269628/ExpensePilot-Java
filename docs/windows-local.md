@@ -1,3 +1,33 @@
+## Docker 构建在 Maven 下载依赖时卡住（Windows 国内网络）
+
+旧 Dockerfile 包含 `mvn dependency:go-offline`，首次启动会额外下载大量插件依赖，例如 `javassist`。这种 `WARNING` 本身不代表构建失败。现在镜像构建已改为：
+
+- 去掉单独的 `dependency:go-offline` 步骤，直接执行一次 Maven `package`；
+- 默认使用阿里云 Maven 公共镜像，设置在仓库的 `ops/maven-settings.xml`，无需安装宿主机 Maven；
+- 启用 BuildKit 的 Maven 本地仓库缓存，保留跨次构建已下载的依赖；
+- 固定 Maven Compiler Plugin 版本，消除有效 POM 中的版本缺失警告。
+
+更新到包含这些修改的 `main` 分支后，PowerShell 中执行：
+
+```powershell
+git pull
+docker compose build --progress=plain app
+docker compose up -d
+```
+
+首次运行仍然需要下载 Maven/Java 基础镜像和依赖，具体耗时取决于网络；但此后重建会复用缓存。不要为了处理下载慢而执行 `docker compose down -v`，因为它会删除 MySQL 等命名卷。
+
+如果阿里云 Maven 镜像在你当前网络不可用，可以**仅在本次 PowerShell 会话**中切换回 Maven Central，无需修改仓库文件：
+
+```powershell
+$env:MAVEN_MIRROR_URL = "https://repo.maven.apache.org/maven2"
+docker compose build --progress=plain app
+Remove-Item Env:MAVEN_MIRROR_URL
+docker compose up -d
+```
+
+如果出现 `Could not transfer artifact`、`Connection timed out`、`PKIX path building failed`，属于仓库网络/TLS 问题，检查 Docker Desktop 的代理、DNS、网络连通性。若出现 `BUILD FAILURE`，应查看紧挨着的 `[ERROR]`，不能把依赖警告当作根因。
+
 # ExpensePilot Windows + Docker 本地完整工作区
 
 > 状态：开发分支中的完整集成方案。运行通过与否以 GitHub Actions 和真实机器的测试日志为准，而不是以本文档声称为准。
