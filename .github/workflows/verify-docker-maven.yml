@@ -1,0 +1,89 @@
+name: Docker Maven mirror and cache regression
+
+on:
+  push:
+    branches:
+      - main
+      - fix/windows-docker-maven-download
+    paths:
+      - Dockerfile
+      - pom.xml
+      - ops/maven-settings.xml
+      - docker-compose.yml
+      - src/main/resources/static/styles.css
+      - ops/ExpensePilotHealthProbe.java
+      - ops/check-windows.ps1
+      - .github/workflows/verify-docker-maven.yml
+  pull_request:
+    branches:
+      - main
+    paths:
+      - Dockerfile
+      - pom.xml
+      - ops/maven-settings.xml
+      - docker-compose.yml
+      - src/main/resources/static/styles.css
+      - ops/ExpensePilotHealthProbe.java
+      - ops/check-windows.ps1
+      - .github/workflows/verify-docker-maven.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docker-maven-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  java-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - name: Verify all Java unit tests with the pinned compiler
+        run: mvn -B -ntp -Dstyle.color=never clean verify
+
+  docker-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Maven settings and Docker Compose
+        shell: bash
+        run: |
+          python3 -c "import xml.etree.ElementTree as ET; ET.parse('ops/maven-settings.xml')"
+          docker compose config -q
+          # User-facing compose configuration still pins MySQL 8.0.
+          grep -q 'image: mysql:8.0' docker-compose.yml
+      - name: Check frontend has no render-blocking external font dependency
+        shell: bash
+        run: |
+          if grep -E -q 'fonts[.](googleapis|gstatic)[.]com' src/main/resources/static/styles.css; then
+            echo 'ERROR: local UI must not require Google Fonts to render'
+            exit 1
+          fi
+          grep -q "Microsoft YaHei" src/main/resources/static/styles.css
+          echo 'SUCCESS: Frontend renders with built-in Windows fonts'
+      - name: Build Docker image (GitHub US runner uses Maven Central)
+        # The local Windows Compose default stays Aliyun for China-based networks.
+        # CI verifies that the URL override works and the app jar is runnable.
+        run: docker build --progress=plain --build-arg MAVEN_MIRROR_URL=https://repo.maven.apache.org/maven2 -t expensepilot-maven-verified:ci .
+      - name: Verify runnable Spring Boot fat jar is inside the resulting image
+        shell: bash
+        run: |
+          container_id="$(docker create expensepilot-maven-verified:ci)"
+          docker cp "$container_id:/app/app.jar" /tmp/expensepilot-app.jar
+          docker cp "$container_id:/app/healthcheck/ExpensePilotHealthProbe.class" /tmp/ExpensePilotHealthProbe.class
+          docker rm "$container_id"
+          test -s /tmp/expensepilot-app.jar
+          test -s /tmp/ExpensePilotHealthProbe.class
+          unzip -p /tmp/expensepilot-app.jar META-INF/MANIFEST.MF > /tmp/manifest.txt
+          cat /tmp/manifest.txt
+          grep -q 'Start-Class: com.expensepilot.ExpensePilotApplication' /tmp/manifest.txt
+          echo 'SUCCESS: Docker image contains executable Spring Boot jar'

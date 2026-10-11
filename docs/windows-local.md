@@ -1,3 +1,66 @@
+## 浏览器访问 localhost:8080 白屏、一直正在加载
+
+原版本页面样式包含一个会阻塞渲染的 `fonts.googleapis.com` 字体导入。部分国内 Windows 网络无法完成这个请求，可能导致浏览器长时间白屏。现已移除外部字体请求，页面使用 Windows 内置微软雅黑、Segoe UI 等系统字体，离线亦可渲染。
+
+此外，`docker compose up -d` 中出现 `Started` **并不代表**后端 HTTP 已就绪。Docker Compose 中的应用容器现具有 HTTP `/actuator/health` 健康检查，等待 JVM 初始化、Flyway 和依赖服务：
+
+```powershell
+git pull
+docker compose up -d --build --wait --wait-timeout 300
+docker compose ps -a
+```
+
+可在不重新构建、不删除数据库的前提下运行自检脚本：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\ops\check-windows.ps1
+```
+
+脚本会轮询 `http://127.0.0.1:8080/actuator/health`，并检查首页、CSS 和 JavaScript 的 HTTP 响应。如果后端 180 秒内仍未就绪，会打印 `docker compose logs --tail 150 app` 的错误线索。
+
+请优先直接访问 `http://127.0.0.1:8080/`，并按 `Ctrl+Shift+R` 强制刷新浏览器静态资源。不要因为白屏就执行 `docker compose down -v`（会删除数据库等持久化数据）。
+
+### 本地诊断的快速命令
+
+```powershell
+docker compose ps -a
+docker compose logs --tail 150 app
+curl.exe -i --max-time 10 http://127.0.0.1:8080/actuator/health
+curl.exe -i --max-time 10 http://127.0.0.1:8080/
+```
+
+如果健康检查返回 `UP` 且首页返回 200，说明后端与页面服务正常，可进一步在 Edge 开发者工具（F12）的 Network/Console 中排查浏览器扩展、代理、缓存问题。若健康检查超时，请先提供完整应用日志，不要盲目修改数据库版本；Compose 已固定为 **MySQL 8.0**。
+
+## Docker 构建在 Maven 下载依赖时卡住（Windows 国内网络）
+
+旧 Dockerfile 包含 `mvn dependency:go-offline`，首次启动会额外下载大量插件依赖，例如 `javassist`。这种 `WARNING` 本身不代表构建失败。现在镜像构建已改为：
+
+- 去掉单独的 `dependency:go-offline` 步骤，直接执行一次 Maven `package`；
+- 默认使用阿里云 Maven 公共镜像，设置在仓库的 `ops/maven-settings.xml`，无需安装宿主机 Maven；
+- 启用 BuildKit 的 Maven 本地仓库缓存，保留跨次构建已下载的依赖；
+- 固定 Maven Compiler Plugin 版本，消除有效 POM 中的版本缺失警告。
+
+更新到包含这些修改的 `main` 分支后，PowerShell 中执行：
+
+```powershell
+git pull
+docker compose build --progress=plain app
+docker compose up -d
+```
+
+首次运行仍然需要下载 Maven/Java 基础镜像和依赖，具体耗时取决于网络；但此后重建会复用缓存。不要为了处理下载慢而执行 `docker compose down -v`，因为它会删除 MySQL 等命名卷。
+
+如果阿里云 Maven 镜像在你当前网络不可用，可以**仅在本次 PowerShell 会话**中切换回 Maven Central，无需修改仓库文件：
+
+```powershell
+$env:MAVEN_MIRROR_URL = "https://repo.maven.apache.org/maven2"
+docker compose build --progress=plain app
+Remove-Item Env:MAVEN_MIRROR_URL
+docker compose up -d
+```
+
+如果出现 `Could not transfer artifact`、`Connection timed out`、`PKIX path building failed`，属于仓库网络/TLS 问题，检查 Docker Desktop 的代理、DNS、网络连通性。若出现 `BUILD FAILURE`，应查看紧挨着的 `[ERROR]`，不能把依赖警告当作根因。
+
 # ExpensePilot Windows + Docker 本地完整工作区
 
 > 状态：开发分支中的完整集成方案。运行通过与否以 GitHub Actions 和真实机器的测试日志为准，而不是以本文档声称为准。
