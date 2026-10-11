@@ -4,6 +4,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.stereotype.Component;
+import org.springframework.context.annotation.Profile;
 
 import java.util.List;
 
@@ -11,6 +12,7 @@ import java.util.List;
  * 启动即校验完整生产工具契约，缺任何一个都拒绝启动。
  */
 @Component
+@Profile("!local")
 @RequiredArgsConstructor
 public class RequiredMcpToolsVerifier implements ApplicationRunner {
 

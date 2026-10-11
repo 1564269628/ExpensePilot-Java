@@ -8,6 +8,7 @@ import org.springframework.ai.mcp.SyncMcpToolCallbackProvider;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.context.annotation.Primary;
 import org.springframework.stereotype.Component;
+import org.springframework.context.annotation.Profile;
 
 import java.util.Arrays;
 import java.util.LinkedHashMap;
@@ -21,6 +22,7 @@ import java.util.Map;
  * “没找到材料”后静默降级。</p>
  */
 @Component
+@Profile("!local")
 @Primary
 @RequiredArgsConstructor
 public class SpringAiMcpExpenseClient implements ExpenseMcpClient {

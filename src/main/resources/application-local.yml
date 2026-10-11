@@ -1,0 +1,29 @@
+# Local-only Groq token: AES-256-GCM encrypted with the owner-selected password.
+# WARNING: The password and ciphertext are public; anyone can recover this token.
+# Never use this configuration in a production or internet-facing deployment.
+spring:
+  ai:
+    openai:
+      # Spring AI appends /v1/chat/completions; avoid a duplicated /v1.
+      base-url: https://api.groq.com/openai
+      chat:
+        options:
+          model: qwen/qwen3.8-27b
+          temperature: 0.1
+    mcp:
+      client:
+        enabled: false
+        toolcallback:
+          enabled: false
+
+server:
+  address: 0.0.0.0
+spring.servlet.multipart.max-file-size: 8MB
+spring.servlet.multipart.max-request-size: 10MB
+
+expensepilot:
+  local:
+    enabled: true
+  groq:
+    decryption-password: "123456"
+    encrypted-key: "v1:7eezazh83XYAjb0E/M84DPSwbokAmMecO3cynoYr/ZfvsdSzJobfxssLmLOGTlFAkSWbA7ToPFM6/ZQBZX9bSLSWg0vuaq7c5UxmDjtKyJO1oqSLZ8NiBBMCfViHGiGrsYT5Bw=="

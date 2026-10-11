@@ -1,0 +1,291 @@
+#!/usr/bin/env python3
+"""Real HTTP end-to-end smoke test against the Windows-compatible local stack.
+
+Uses Groq through the running Java backend. No mocked model responses.
+Does not print credential material.
+"""
+import json
+import base64
+import os
+import sys
+import time
+import urllib.error
+import urllib.request
+import uuid
+
+BASE = os.environ.get("EXPENSEPILOT_BASE_URL", "http://127.0.0.1:8080")
+TIMEOUT = 90
+
+
+def request(method, path, payload=None, headers=None):
+    body = json.dumps(payload).encode("utf-8") if payload is not None else None
+    req = urllib.request.Request(
+        BASE + path, data=body, method=method,
+        headers={"Content-Type": "application/json", **(headers or {})})
+    try:
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as response:
+            raw = response.read()
+            return response.status, json.loads(raw) if raw else {}
+    except urllib.error.HTTPError as error:
+        raw = error.read().decode("utf-8", errors="replace")
+        try:
+            message = json.loads(raw)
+        except ValueError:
+            message = raw[:500]
+        return error.code, message
+
+
+def check(condition, message):
+    if not condition:
+        raise AssertionError(message)
+    print("PASS:", message, flush=True)
+
+
+def get(path):
+    return request("GET", path)
+
+
+def post(path, data=None, headers=None):
+    return request("POST", path, data, headers)
+
+
+def wait_for_state(task_id, desired, seconds=220):
+    started = time.monotonic()
+    last = None
+    while time.monotonic() - started < seconds:
+        status, data = get("/api/v1/expense-tasks/" + str(task_id))
+        assert status == 200, (status, data)
+        state = (data["status"], data.get("currentNode"))
+        if state != last:
+            print("task", task_id, "transition", state, flush=True)
+            last = state
+        if data["status"] in desired:
+            return data
+        if data["status"] == "MANUAL_TAKEOVER":
+            raise AssertionError("Agent permanently failed: " + str(data.get("lastError")))
+        time.sleep(3)
+    raise AssertionError("Timed out waiting for " + str(desired) + ", final=" + str(last))
+
+
+def wait_after_approval(task_id, previous_node, seconds=180):
+    """Do not accept the same stale WAITING_APPROVAL snapshot immediately."""
+    deadline = time.monotonic() + seconds
+    last = None
+    while time.monotonic() < deadline:
+        status, snapshot = get("/api/v1/expense-tasks/" + str(task_id))
+        assert status == 200, (status, snapshot)
+        current = (snapshot["status"], snapshot.get("currentNode"))
+        if current != last:
+            print("task", task_id, "post-approval transition", current, flush=True)
+            last = current
+        if snapshot["status"] == "SUCCEEDED":
+            return snapshot
+        if snapshot["status"] == "WAITING_APPROVAL" and (
+                snapshot.get("currentNode") != previous_node):
+            return snapshot
+        if snapshot["status"] in {"REJECTED", "MANUAL_TAKEOVER"}:
+            raise AssertionError("Unexpected terminal state after approval: " + str(snapshot))
+        time.sleep(2)
+    raise AssertionError("Approval did not advance the Graph: " + str(last))
+
+
+def main():
+    status, health = get("/actuator/health")
+    check(status == 200 and health.get("status") == "UP",
+          "Spring Boot health is UP")
+
+    status, seed = post("/api/v1/local/demo-seed", {})
+    check(status == 200 and seed.get("sample") is True,
+          "Demo trip and invoice data are durably seeded")
+
+    status, documents = get("/api/v1/local/documents")
+    check(status == 200 and len(documents) >= 2,
+          "Stored email/drive document metadata available")
+
+    status, trips = get("/api/v1/local/trips")
+    check(status == 200 and len(trips) >= 1,
+          "Stored trip data available")
+
+    status, policies = get("/api/v1/local/policies")
+    check(status == 200 and len(policies) >= 4,
+          "Deterministic local policy rules available")
+
+    status, overview = get("/api/v1/local/overview")
+    check(status == 200 and overview.get("userId") == "local-demo-user",
+          "Local single-user workbench overview and identity are available")
+
+    # Exercise the same CRUD endpoints used by all workbench forms.
+    status, manual_doc = post("/api/v1/local/documents", {
+        "sourceType": "DRIVE", "fileName": "manual-workbench-receipt.pdf",
+        "category": "OTHER", "amount": 25.50,
+        "city": "苏州", "issuedOn": "2026-10-02"
+    })
+    check(status == 200 and manual_doc.get("documentRef", "").startswith("local://"),
+          "Workbench manual document entry persists in MySQL")
+
+    status, _ = post("/api/v1/local/trips", {
+        "city": "苏州", "startDate": "2026-10-01",
+        "endDate": "2026-10-03", "purpose": "HTTP smoke workbench test"
+    })
+    status2, new_trips = get("/api/v1/local/trips")
+    check(status == 200 and status2 == 200
+          and any(t.get("city") == "苏州" for t in new_trips),
+          "Workbench travel entry persists and is queryable")
+
+    status, _ = post("/api/v1/local/policies", {
+        "city": "苏州", "category": "HOTEL",
+        "maxAmount": 350, "description": "LOCAL TEST: Suzhou limit"
+    })
+    status2, policy_rows = get("/api/v1/local/policies")
+    check(status == 200 and status2 == 200
+          and any(p.get("city") == "苏州" and p.get("category") == "HOTEL"
+                  for p in policy_rows),
+          "Workbench policy updates persist and are queryable")
+
+    # Verify actual multipart HTTP file persistence and authenticated download.
+    png = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+cmBsAAAAASUVORK5CYII=")
+    boundary = "ExpensePilotTest" + uuid.uuid4().hex
+    pieces = []
+    for name, value in {
+        "city": "苏州", "category": "OTHER",
+        "amount": "19.90", "issuedOn": "2026-10-02"
+    }.items():
+        pieces.append(("--" + boundary + "\r\nContent-Disposition: form-data; name=\""
+                       + name + "\"\r\n\r\n" + value + "\r\n").encode("utf-8"))
+    pieces.append(("--" + boundary
+                   + "\r\nContent-Disposition: form-data; name=\"file\"; filename=\"proof.png\""
+                   + "\r\nContent-Type: image/png\r\n\r\n").encode("utf-8"))
+    pieces.append(png)
+    pieces.append(("\r\n--" + boundary + "--\r\n").encode("utf-8"))
+    req = urllib.request.Request(
+        BASE + "/api/v1/local/documents/upload",
+        data=b"".join(pieces), method="POST",
+        headers={"Content-Type": "multipart/form-data; boundary=" + boundary})
+    with urllib.request.urlopen(req, timeout=TIMEOUT) as response:
+        uploaded = json.load(response)
+        upload_status = response.status
+    uploaded_ref = uploaded.get("documentRef", "")
+    check(upload_status == 200 and uploaded_ref.startswith("local://document/"),
+          "Workbench PDF/image multipart upload is accepted and stored")
+    from urllib.parse import quote
+    with urllib.request.urlopen(
+            BASE + "/api/v1/local/documents/file?ref=" + quote(uploaded_ref),
+            timeout=TIMEOUT) as download:
+        saved_bytes = download.read()
+        download_status = download.status
+    check(download_status == 200 and saved_bytes == png,
+          "File download returns the exact persisted upload bytes")
+
+    # Groq's free/on-demand tier can hit an output-tokens-per-minute quota.
+    # Honor the provider's suggested delay rather than mocking a response.
+    import re
+    for attempt in range(8):
+        status, model = post("/api/v1/local/groq-check", {})
+        message = str(model.get("message", ""))
+        if status == 502 and "HTTP 429" in message and attempt < 7:
+            match = re.search(r"try again in ([0-9.]+)s", message, re.I)
+            delay = min(95, max(15, float(match.group(1)) + 5)) if match else 65
+            print("Groq output token quota reached; retrying after provider cooldown",
+                  flush=True)
+            time.sleep(delay)
+            continue
+        break
+    diagnostic = str(model)[:900]
+    import re
+    diagnostic = re.sub(r"gsk_[A-Za-z0-9_-]+", "[REDACTED]", diagnostic)
+    check(status == 200 and model.get("live") is True
+          and bool(model.get("response")),
+          "Real Groq API call returned a response (HTTP "
+          + str(status) + ": " + diagnostic + ")")
+
+    idem = str(uuid.uuid4())
+    request_text = seed["suggestedRequest"]
+    status, created = post("/api/v1/expense-tasks",
+                           {"requestText": request_text},
+                           {"Idempotency-Key": idem})
+    check(status == 202 and created.get("taskId"),
+          "Agent task accepted asynchronously")
+    task_id = created["taskId"]
+    check(isinstance(task_id, str) and len(task_id) >= 16,
+          "Task ID is returned as a lossless JSON string, not an unsafe JS Number")
+    status, rows = get("/api/v1/local/tasks")
+    check(status == 200 and any(t.get("taskId") == task_id
+                                for t in rows),
+          "Browser task list preserves the full 64-bit task ID")
+    status, details = get("/api/v1/local/tasks/" + task_id + "/details")
+    check(status == 200
+          and details.get("task", {}).get("taskId") == task_id
+          and isinstance(details.get("steps"), list),
+          "Task details, DAG and audit endpoint can be viewed from a browser")
+
+    status, duplicate = post("/api/v1/expense-tasks",
+                             {"requestText": request_text},
+                             {"Idempotency-Key": idem})
+    check(status == 202 and duplicate.get("taskId") == task_id,
+          "Idempotency-Key does not create duplicate tasks")
+
+    status, conflict = post("/api/v1/expense-tasks",
+                            {"requestText": "other text"},
+                            {"Idempotency-Key": idem})
+    check(status == 409, "Reusing the idempotency key with new text is rejected")
+
+    current = wait_for_state(task_id,
+                             {"WAITING_APPROVAL", "WAITING_MATERIAL",
+                              "WAITING_INPUT", "SUCCEEDED"})
+    if current["status"] == "WAITING_INPUT":
+        status, _ = post("/api/v1/expense-tasks/" + str(task_id) + "/clarification",
+                         {"city": "上海", "startDate": "2026-10-01",
+                          "endDate": "2026-10-03"})
+        check(status == 202, "Planner clarification resumes Graph")
+        current = wait_for_state(task_id,
+                                 {"WAITING_APPROVAL", "WAITING_MATERIAL", "SUCCEEDED"})
+    if current["status"] == "WAITING_MATERIAL":
+        refs = [d["documentRef"] for d in documents]
+        status, _ = post("/api/v1/expense-tasks/" + str(task_id) + "/supplement",
+                         {"materialRefs": refs})
+        check(status == 202, "Supplement API resumes Graph from checkpoint")
+        current = wait_for_state(task_id, {"WAITING_APPROVAL", "SUCCEEDED"})
+    for _ in range(3):
+        if current["status"] == "SUCCEEDED":
+            break
+        check(current["status"] == "WAITING_APPROVAL",
+              "Workflow stops at explicit human approval")
+        previous_node = current.get("currentNode")
+        operation = ("POLICY_EXCEPTION" if previous_node
+                     == "humanApproval" else "SUBMIT_REPORT")
+        status, decided = post(
+            "/api/v1/expense-tasks/" + str(task_id)
+            + "/approval/approve?operationType=" + operation
+            + "&comment=verified-local-workflow")
+        check(status == 200 and decided.get("status") == "APPROVED",
+              "Approval decision persisted: " + operation)
+        current = wait_after_approval(task_id, previous_node)
+    check(current["status"] == "SUCCEEDED", "Graph and local expense submission succeeded")
+
+    status, details = get("/api/v1/local/tasks/" + task_id + "/details")
+    check(status == 200 and details["task"]["status"] == "SUCCEEDED"
+          and any(a.get("operationType") == "SUBMIT_REPORT"
+                  for a in details.get("approvals", [])),
+          "Completed task detail includes persisted final human approval")
+
+    status, submissions = get("/api/v1/local/submissions")
+    check(status == 200 and len(submissions) > 0,
+          "Local expense receipt stored with unique external business number")
+
+    for _ in range(40):
+        status, notifications = get("/api/v1/local/notifications")
+        if status == 200 and notifications:
+            break
+        time.sleep(3)
+    check(status == 200 and len(notifications) > 0,
+          "RocketMQ/Outbox notification processed and recorded")
+    print("END-TO-END RESULT: PASS", flush=True)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as exc:
+        print("END-TO-END RESULT: FAIL", type(exc).__name__, str(exc), file=sys.stderr)
+        sys.exit(1)

@@ -1,0 +1,138 @@
+name: ExpensePilot Java + Windows-style Docker verification
+
+on:
+  push:
+    branches:
+      - main
+      - feat/windows-groq-fullstack
+  workflow_dispatch:
+
+# New commits supersede stale validation runs on the same branch.
+concurrency:
+  group: expensepilot-verification-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  rocketmq-boot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 9
+    steps:
+      - uses: actions/checkout@v4
+      - name: Boot RocketMQ NameServer and Broker
+        run: |
+          docker compose up -d rocketmq-namesrv rocketmq-broker
+          sleep 18
+      - name: Inspect native RocketMQ broker logs and container state
+        shell: bash
+        run: |
+          docker compose ps -a
+          broker_id="$(docker compose ps -aq rocketmq-broker)"
+          docker inspect "$broker_id" --format '{{.State.Status}} exit={{.State.ExitCode}} restartCount={{.RestartCount}}'
+          docker cp "$broker_id:/home/rocketmq/logs/rocketmqlogs/broker.log" /tmp/expensepilot-broker.log || true
+          if test -f /tmp/expensepilot-broker.log; then
+            tail -n 140 /tmp/expensepilot-broker.log
+          fi
+          docker compose logs --no-color --tail 90 rocketmq-broker rocketmq-namesrv
+          test "$(docker inspect "$broker_id" --format '{{.State.Running}}')" = true
+      - name: Clean up
+        if: always()
+        run: docker compose down -v --remove-orphans
+  groq-direct:
+    name: Direct real Groq API probe
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install AES probe dependencies
+        run: python -m pip install --disable-pip-version-check cryptography groq
+      - name: Check direct Groq endpoint with decrypted repository configuration
+        run: python ops/probe_groq.py
+  java-and-frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Validate frontend syntax
+        run: |
+          node --check src/main/resources/static/app.js
+          node --check ops/browser_smoke.cjs
+      - name: Compile and run all Java unit tests
+        run: mvn -B -ntp -Dstyle.color=never clean verify
+      - name: Validate Docker Compose configuration
+        run: docker compose config -q
+      - name: Check Python E2E script syntax
+        run: python3 -m py_compile ops/smoke_local.py ops/smoke_branches.py
+
+  docker-e2e:
+    needs: java-and-frontend
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Start full Docker environment
+        run: docker compose up --build -d
+      - name: Wait for Java backend and verify HTTP/UI
+        shell: bash
+        run: |
+          for attempt in $(seq 1 120); do
+            if curl -fsS http://127.0.0.1:8080/actuator/health > /tmp/expense-health.json; then
+              cat /tmp/expense-health.json
+              break
+            fi
+            sleep 5
+          done
+          curl -fsS -o /tmp/expense-health.json http://127.0.0.1:8080/actuator/health
+          grep -q UP /tmp/expense-health.json
+          curl -fsS -o /tmp/expense-home.html http://127.0.0.1:8080/
+          grep -q ExpensePilot /tmp/expense-home.html
+          curl -fsS -o /tmp/expense-app.js http://127.0.0.1:8080/app.js
+          grep -q expense /tmp/expense-app.js
+          curl -fsS -o /tmp/expense-styles.css http://127.0.0.1:8080/styles.css
+          grep -q sidebar /tmp/expense-styles.css
+      - name: Test live Groq, Planner, local tools, approvals and RocketMQ
+        run: python3 ops/smoke_local.py
+      - name: Cool down Groq output-token quota before more real planner calls
+        run: sleep 75
+      - name: Verify live material supplementation and policy rejection
+        run: python3 ops/smoke_branches.py
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install Playwright Chromium for actual browser acceptance tests
+        run: |
+          npm install --no-save playwright@1.56.1
+          npx playwright install --with-deps chromium
+      - name: Cool down Groq quota before browser-driven Agent workflow
+        run: sleep 75
+      - name: Exercise complete frontend in a real Chromium browser
+        run: node ops/browser_smoke.cjs
+      - name: Upload screenshots from browser acceptance run
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: expensepilot-workbench-screenshots
+          path: artifacts/*.png
+          if-no-files-found: ignore
+      - name: Debug failing containers without exposing config
+        if: failure()
+        run: |
+          docker compose ps
+          docker compose logs --no-color --tail 400 app | sed -E 's/gsk_[A-Za-z0-9_-]+/[REDACTED]/g'
+          docker compose logs --no-color --tail 50 mysql redis rocketmq-namesrv rocketmq-broker
+      - name: Stop test stack
+        if: always()
+        run: docker compose down -v --remove-orphans

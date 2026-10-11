@@ -189,10 +189,19 @@ public class ExpenseGraphNodes {
             );
         }
 
-        return Map.of(
-                MATERIAL_RESULT, data,
-                MATERIAL_ROUTE, complete ? "READY" : "MISSING"
-        );
+        Map<String, Object> patch = new LinkedHashMap<>();
+        patch.put(MATERIAL_RESULT, data);
+        patch.put(MATERIAL_ROUTE, complete ? "READY" : "MISSING");
+        // A resumed local supplement may add new receipts/trips after initial
+        // parallel retrieval. Persist refreshed validated facts in Graph state,
+        // otherwise later policy/report nodes would process the old empty data.
+        if (data.get("validatedInvoices") instanceof Map<?, ?> invoices) {
+            patch.put(INVOICE_RESULT, invoices);
+        }
+        if (data.get("validatedTravel") instanceof Map<?, ?> trip) {
+            patch.put(TRAVEL_RESULT, trip);
+        }
+        return patch;
     }
 
     public Map<String, Object> requestSupplement(OverAllState state) {

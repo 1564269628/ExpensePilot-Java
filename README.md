@@ -1,5 +1,19 @@
 # ExpensePilot-Java
 
+## Windows + Docker 一键启动（开发分支）
+
+```powershell
+git clone -b feat/windows-groq-fullstack https://github.com/1564269628/ExpensePilot-Java.git
+cd ExpensePilot-Java
+docker compose up --build -d
+```
+
+在浏览器打开 **http://localhost:8080**。页面提供材料上传与录入、差旅行程、费用政策、真实 Groq Agent 规划、补件/澄清、人工审批、报销提交和通知记录。使用 `docker compose logs -f app` 查看运行日志。
+
+**重要区别：** 本地版邮件/网盘/差旅和报销接口使用 MySQL 持久化的本地工作区数据（可显式加载 DEMO 样例）；企业生产 MCP 仍需要真实外部系统和身份授权。公开仓库中的本地 Groq 凭据密文与解密密码可以被任何人恢复，不能视为安全凭据。完整说明、限制与测试命令见 [Windows 使用文档](docs/windows-local.md)。
+
+---
+
 企业费用报销自主执行 Agent，基于 **Spring Boot + Spring AI Structured Output + Spring AI Alibaba Graph + MCP** 构建。
 
 ## 当前实现不是 Demo Runtime
