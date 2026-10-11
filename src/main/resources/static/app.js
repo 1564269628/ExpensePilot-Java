@@ -135,14 +135,14 @@
     }
     list.innerHTML = state.tasks.map((t) =>
       '<button type="button" class="task-item '
-      + (Number(t.taskId) === state.selectedTaskId ? 'selected' : '')
+      + (String(t.taskId) === state.selectedTaskId ? 'selected' : '')
       + '" data-task-id="' + safe(t.taskId) + '"><span><strong>任务 #'
       + safe(t.taskId) + '</strong><small>' + when(t.updatedAt)
       + ' · ' + safe(t.currentNode || 'waiting') + '</small></span>'
       + badge(t.status) + '</button>').join('');
     list.querySelectorAll('[data-task-id]').forEach((button) =>
       button.addEventListener('click', () =>
-        { state.selectedTaskId = Number(button.dataset.taskId);
+        { state.selectedTaskId = button.dataset.taskId;
           loadTask(true); drawTasks(); }));
   }
 
@@ -328,7 +328,7 @@
             'Content-Type': 'application/json', 'Idempotency-Key': idempotency()
           }, body: JSON.stringify({ requestText: text })
         });
-        state.selectedTaskId = Number(result.taskId);
+        state.selectedTaskId = String(result.taskId);
         notify('Agent 任务已创建，正在异步规划');
         await refresh(); await loadTask(true);
       });
