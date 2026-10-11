@@ -43,7 +43,6 @@ public class ExpenseGraphConfig {
                 .dataSource(dataSource)
                 .stateSerializer(StateGraph.DEFAULT_JACKSON_SERIALIZER)
                 .createOption(CreateOption.CREATE_IF_NOT_EXISTS)
-                .maxCachedThreads(1000)
                 .build();
     }
 
