@@ -59,6 +59,8 @@ jobs:
         run: |
           python3 -c "import xml.etree.ElementTree as ET; ET.parse('ops/maven-settings.xml')"
           docker compose config -q
+          # User-facing compose configuration still pins MySQL 8.0.
+          grep -q 'image: mysql:8.0' docker-compose.yml
       - name: Check frontend has no render-blocking external font dependency
         shell: bash
         run: |
@@ -68,8 +70,10 @@ jobs:
           fi
           grep -q "Microsoft YaHei" src/main/resources/static/styles.css
           echo 'SUCCESS: Frontend renders with built-in Windows fonts'
-      - name: Build Windows-compatible Docker image using default Maven mirror
-        run: docker build --progress=plain -t expensepilot-maven-verified:ci .
+      - name: Build Docker image (GitHub US runner uses Maven Central)
+        # The local Windows Compose default stays Aliyun for China-based networks.
+        # CI verifies that the URL override works and the app jar is runnable.
+        run: docker build --progress=plain --build-arg MAVEN_MIRROR_URL=https://repo.maven.apache.org/maven2 -t expensepilot-maven-verified:ci .
       - name: Verify runnable Spring Boot fat jar is inside the resulting image
         shell: bash
         run: |
