@@ -62,7 +62,7 @@ jobs:
       - name: Check frontend has no render-blocking external font dependency
         shell: bash
         run: |
-          if grep -E -q 'fonts\\.(googleapis|gstatic)\\.com' src/main/resources/static/styles.css; then
+          if grep -E -q 'fonts[.](googleapis|gstatic)[.]com' src/main/resources/static/styles.css; then
             echo 'ERROR: local UI must not require Google Fonts to render'
             exit 1
           fi
@@ -75,9 +75,9 @@ jobs:
         run: |
           container_id="$(docker create expensepilot-maven-verified:ci)"
           docker cp "$container_id:/app/app.jar" /tmp/expensepilot-app.jar
+          docker cp "$container_id:/app/healthcheck/ExpensePilotHealthProbe.class" /tmp/ExpensePilotHealthProbe.class
           docker rm "$container_id"
           test -s /tmp/expensepilot-app.jar
-          docker cp "$container_id:/app/healthcheck/ExpensePilotHealthProbe.class" /tmp/ExpensePilotHealthProbe.class
           test -s /tmp/ExpensePilotHealthProbe.class
           unzip -p /tmp/expensepilot-app.jar META-INF/MANIFEST.MF > /tmp/manifest.txt
           cat /tmp/manifest.txt
