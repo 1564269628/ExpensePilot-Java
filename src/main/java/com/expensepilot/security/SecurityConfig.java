@@ -2,6 +2,7 @@ package com.expensepilot.security;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Profile;
 import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
@@ -14,6 +15,7 @@ import org.springframework.security.web.SecurityFilterChain;
  * <p>客户端不能再提交任意 userId。用户身份只能来自受信任 IdP 签发的 JWT subject。</p>
  */
 @Configuration
+@Profile("!local")
 public class SecurityConfig {
 
     @Bean
