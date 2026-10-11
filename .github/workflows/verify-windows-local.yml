@@ -69,7 +69,7 @@ jobs:
       - name: Validate Docker Compose configuration
         run: docker compose config -q
       - name: Check Python E2E script syntax
-        run: python3 -m py_compile ops/smoke_local.py
+        run: python3 -m py_compile ops/smoke_local.py ops/smoke_branches.py
 
   docker-e2e:
     needs: java-and-frontend
@@ -95,6 +95,8 @@ jobs:
           curl -fsS http://127.0.0.1:8080/styles.css | grep -q sidebar
       - name: Test live Groq, Planner, local tools, approvals and RocketMQ
         run: python3 ops/smoke_local.py
+      - name: Verify live material supplementation and policy rejection
+        run: python3 ops/smoke_branches.py
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
