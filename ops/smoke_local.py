@@ -5,6 +5,7 @@ Uses Groq through the running Java backend. No mocked model responses.
 Does not print credential material.
 """
 import json
+import base64
 import os
 import sys
 import time
@@ -87,6 +88,73 @@ def main():
     check(status == 200 and len(policies) >= 4,
           "Deterministic local policy rules available")
 
+    status, overview = get("/api/v1/local/overview")
+    check(status == 200 and overview.get("userId") == "local-demo-user",
+          "Local single-user workbench overview and identity are available")
+
+    # Exercise the same CRUD endpoints used by all workbench forms.
+    status, manual_doc = post("/api/v1/local/documents", {
+        "sourceType": "DRIVE", "fileName": "manual-workbench-receipt.pdf",
+        "category": "OTHER", "amount": 25.50,
+        "city": "苏州", "issuedOn": "2026-10-02"
+    })
+    check(status == 200 and manual_doc.get("documentRef", "").startswith("local://"),
+          "Workbench manual document entry persists in MySQL")
+
+    status, _ = post("/api/v1/local/trips", {
+        "city": "苏州", "startDate": "2026-10-01",
+        "endDate": "2026-10-03", "purpose": "HTTP smoke workbench test"
+    })
+    status2, new_trips = get("/api/v1/local/trips")
+    check(status == 200 and status2 == 200
+          and any(t.get("city") == "苏州" for t in new_trips),
+          "Workbench travel entry persists and is queryable")
+
+    status, _ = post("/api/v1/local/policies", {
+        "city": "苏州", "category": "HOTEL",
+        "maxAmount": 350, "description": "LOCAL TEST: Suzhou limit"
+    })
+    status2, policy_rows = get("/api/v1/local/policies")
+    check(status == 200 and status2 == 200
+          and any(p.get("city") == "苏州" and p.get("category") == "HOTEL"
+                  for p in policy_rows),
+          "Workbench policy updates persist and are queryable")
+
+    # Verify actual multipart HTTP file persistence and authenticated download.
+    png = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+cmBsAAAAASUVORK5CYII=")
+    boundary = "ExpensePilotTest" + uuid.uuid4().hex
+    pieces = []
+    for name, value in {
+        "city": "苏州", "category": "OTHER",
+        "amount": "19.90", "issuedOn": "2026-10-02"
+    }.items():
+        pieces.append(("--" + boundary + "\r\nContent-Disposition: form-data; name=\""
+                       + name + "\"\r\n\r\n" + value + "\r\n").encode("utf-8"))
+    pieces.append(("--" + boundary
+                   + "\r\nContent-Disposition: form-data; name=\"file\"; filename=\"proof.png\""
+                   + "\r\nContent-Type: image/png\r\n\r\n").encode("utf-8"))
+    pieces.append(png)
+    pieces.append(("\r\n--" + boundary + "--\r\n").encode("utf-8"))
+    req = urllib.request.Request(
+        BASE + "/api/v1/local/documents/upload",
+        data=b"".join(pieces), method="POST",
+        headers={"Content-Type": "multipart/form-data; boundary=" + boundary})
+    with urllib.request.urlopen(req, timeout=TIMEOUT) as response:
+        uploaded = json.load(response)
+        upload_status = response.status
+    uploaded_ref = uploaded.get("documentRef", "")
+    check(upload_status == 200 and uploaded_ref.startswith("local://document/"),
+          "Workbench PDF/image multipart upload is accepted and stored")
+    from urllib.parse import quote
+    with urllib.request.urlopen(
+            BASE + "/api/v1/local/documents/file?ref=" + quote(uploaded_ref),
+            timeout=TIMEOUT) as download:
+        saved_bytes = download.read()
+        download_status = download.status
+    check(download_status == 200 and saved_bytes == png,
+          "File download returns the exact persisted upload bytes")
+
     status, model = post("/api/v1/local/groq-check", {})
     diagnostic = str(model)[:900]
     import re
@@ -104,6 +172,17 @@ def main():
     check(status == 202 and created.get("taskId"),
           "Agent task accepted asynchronously")
     task_id = created["taskId"]
+    check(isinstance(task_id, str) and len(task_id) >= 16,
+          "Task ID is returned as a lossless JSON string, not an unsafe JS Number")
+    status, rows = get("/api/v1/local/tasks")
+    check(status == 200 and any(t.get("taskId") == task_id
+                                for t in rows),
+          "Browser task list preserves the full 64-bit task ID")
+    status, details = get("/api/v1/local/tasks/" + task_id + "/details")
+    check(status == 200
+          and details.get("task", {}).get("taskId") == task_id
+          and isinstance(details.get("steps"), list),
+          "Task details, DAG and audit endpoint can be viewed from a browser")
 
     status, duplicate = post("/api/v1/expense-tasks",
                              {"requestText": request_text},
@@ -147,6 +226,12 @@ def main():
               "Approval decision persisted: " + operation)
         current = wait_for_state(task_id, {"WAITING_APPROVAL", "SUCCEEDED"})
     check(current["status"] == "SUCCEEDED", "Graph and local expense submission succeeded")
+
+    status, details = get("/api/v1/local/tasks/" + task_id + "/details")
+    check(status == 200 and details["task"]["status"] == "SUCCEEDED"
+          and any(a.get("operationType") == "SUBMIT_REPORT"
+                  for a in details.get("approvals", [])),
+          "Completed task detail includes persisted final human approval")
 
     status, submissions = get("/api/v1/local/submissions")
     check(status == 200 and len(submissions) > 0,
