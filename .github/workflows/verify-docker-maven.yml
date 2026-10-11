@@ -10,6 +10,9 @@ on:
       - pom.xml
       - ops/maven-settings.xml
       - docker-compose.yml
+      - src/main/resources/static/styles.css
+      - ops/ExpensePilotHealthProbe.java
+      - ops/check-windows.ps1
       - .github/workflows/verify-docker-maven.yml
   pull_request:
     branches:
@@ -19,6 +22,9 @@ on:
       - pom.xml
       - ops/maven-settings.xml
       - docker-compose.yml
+      - src/main/resources/static/styles.css
+      - ops/ExpensePilotHealthProbe.java
+      - ops/check-windows.ps1
       - .github/workflows/verify-docker-maven.yml
   workflow_dispatch:
 
@@ -53,6 +59,15 @@ jobs:
         run: |
           python3 -c "import xml.etree.ElementTree as ET; ET.parse('ops/maven-settings.xml')"
           docker compose config -q
+      - name: Check frontend has no render-blocking external font dependency
+        shell: bash
+        run: |
+          if grep -E -q 'fonts\\.(googleapis|gstatic)\\.com' src/main/resources/static/styles.css; then
+            echo 'ERROR: local UI must not require Google Fonts to render'
+            exit 1
+          fi
+          grep -q "Microsoft YaHei" src/main/resources/static/styles.css
+          echo 'SUCCESS: Frontend renders with built-in Windows fonts'
       - name: Build Windows-compatible Docker image using default Maven mirror
         run: docker build --progress=plain -t expensepilot-maven-verified:ci .
       - name: Verify runnable Spring Boot fat jar is inside the resulting image
@@ -62,6 +77,8 @@ jobs:
           docker cp "$container_id:/app/app.jar" /tmp/expensepilot-app.jar
           docker rm "$container_id"
           test -s /tmp/expensepilot-app.jar
+          docker cp "$container_id:/app/healthcheck/ExpensePilotHealthProbe.class" /tmp/ExpensePilotHealthProbe.class
+          test -s /tmp/ExpensePilotHealthProbe.class
           unzip -p /tmp/expensepilot-app.jar META-INF/MANIFEST.MF > /tmp/manifest.txt
           cat /tmp/manifest.txt
           grep -q 'Start-Class: com.expensepilot.ExpensePilotApplication' /tmp/manifest.txt
