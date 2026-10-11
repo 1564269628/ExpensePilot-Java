@@ -30,35 +30,27 @@ token = AESGCM(derived).decrypt(nonce, ciphertext, None).decode("utf-8")
 if not token.startswith("gsk_"):
     sys.exit("Decrypted Groq key does not have an expected prefix")
 
-payload = json.dumps({
-    "model": "qwen/qwen3.8-27b",
-    "messages": [{"role": "user", "content": "请只回答：OK"}],
-    "max_completion_tokens": 64,
-}).encode("utf-8")
-req = urllib.request.Request(
-    "https://api.groq.com/openai/v1/chat/completions",
-    data=payload,
-    method="POST",
-    headers={
-        "Authorization": "Bearer " + token,
-        "Content-Type": "application/json",
-    },
-)
+from groq import APIStatusError, Groq
+
+client = Groq(api_key=token, max_retries=0, timeout=30.0)
 try:
-    with urllib.request.urlopen(req, timeout=45) as res:
-        body = json.load(res)
-        answer = (body.get("choices") or [{}])[0].get("message", {}).get("content")
-        print("GROQ DIRECT API: HTTP", res.status,
-              "model:", body.get("model"),
-              "has_response:", bool(answer), flush=True)
-        if not answer:
-            print("Note: API returned a completion without visible content")
-except urllib.error.HTTPError as error:
-    raw = error.read().decode("utf-8", errors="replace")[:600]
-    raw = re.sub(r"gsk_[A-Za-z0-9_-]+", "[REDACTED]", raw)
-    print("GROQ DIRECT API: HTTP", error.code, "reason:", raw, flush=True)
+    response = client.chat.completions.create(
+        model="qwen/qwen3.8-27b",
+        messages=[{"role": "user", "content": "请只回答：OK"}],
+        max_completion_tokens=64,
+    )
+    answer = response.choices[0].message.content
+    print("GROQ OFFICIAL SDK: HTTP 200, model:",
+          response.model, "has_response:", bool(answer), flush=True)
+except APIStatusError as error:
+    text = re.sub(r"gsk_[A-Za-z0-9_-]+", "[REDACTED]",
+                  str(error.message)[:650])
+    print("GROQ OFFICIAL SDK: HTTP", error.status_code,
+          "reason:", text, flush=True)
     sys.exit(1)
 except Exception as error:
-    cause = re.sub(r"gsk_[A-Za-z0-9_-]+", "[REDACTED]", str(error))
-    print("GROQ DIRECT API: failed:", type(error).__name__, cause[:600], flush=True)
+    cause = re.sub(r"gsk_[A-Za-z0-9_-]+", "[REDACTED]",
+                   str(error)[:650])
+    print("GROQ OFFICIAL SDK: failed:",
+          type(error).__name__, cause, flush=True)
     sys.exit(1)
