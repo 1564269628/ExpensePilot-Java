@@ -291,16 +291,38 @@ public class LocalWorkspaceController {
     }
 
     @PostMapping("/groq-check")
-    public Map<String, Object> groqCheck() {
-        String answer = groq.prompt()
-                .system("Answer in one short Chinese sentence. No reasoning.")
-                .user("用一句话介绍企业报销审批的作用。")
-                .call().content();
-        return Map.of(
-                "provider", "Groq",
-                "model", "qwen/qwen3.8-27b",
-                "response", answer == null ? "" : answer,
-                "live", true);
+    public ResponseEntity<Map<String, Object>> groqCheck() {
+        try {
+            String answer = groq.prompt()
+                    .system("Answer in one short Chinese sentence. No reasoning.")
+                    .user("用一句话介绍企业报销审批的作用。")
+                    .call().content();
+            if (answer == null || answer.isBlank()) {
+                return ResponseEntity.status(502).body(Map.of(
+                        "code", "GROQ_EMPTY_RESPONSE",
+                        "message", "Groq returned no visible answer",
+                        "live", false));
+            }
+            return ResponseEntity.ok(Map.of(
+                    "provider", "Groq",
+                    "model", "qwen/qwen3.8-27b",
+                    "response", answer,
+                    "live", true));
+        }
+        catch (RuntimeException error) {
+            Throwable root = error;
+            for (int i = 0; i < 8 && root.getCause() != null; i++) {
+                root = root.getCause();
+            }
+            String raw = root.getMessage() == null
+                    ? root.getClass().getSimpleName() : root.getMessage();
+            String safe = raw.replaceAll("gsk_[A-Za-z0-9_-]+", "[REDACTED]");
+            if (safe.length() > 700) safe = safe.substring(0, 700);
+            return ResponseEntity.status(502).body(Map.of(
+                    "code", "GROQ_REQUEST_FAILED",
+                    "message", safe,
+                    "live", false));
+        }
     }
 
     @PostMapping("/demo-seed")
