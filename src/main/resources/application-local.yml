@@ -1,6 +1,6 @@
-# Local Groq profile. Base64 is encoding, NOT secret encryption.
-# GitHub push protection blocks even Base64-encoded live API keys.
-# On first use, set GROQ_API_KEY_BASE64 (or GROQ_API_KEY) locally.
+# Local-only Groq token: AES-256-GCM encrypted with the owner-selected password.
+# WARNING: The password and ciphertext are public; anyone can recover this token.
+# Never use this configuration in a production or internet-facing deployment.
 spring:
   ai:
     openai:
@@ -17,4 +17,5 @@ expensepilot:
   local:
     enabled: true
   groq:
-    api-key-base64: ${GROQ_API_KEY_BASE64:}
+    decryption-password: "123456"
+    encrypted-key: "v1:7eezazh83XYAjb0E/M84DPSwbokAmMecO3cynoYr/ZfvsdSzJobfxssLmLOGTlFAkSWbA7ToPFM6/ZQBZX9bSLSWg0vuaq7c5UxmDjtKyJO1oqSLZ8NiBBMCfViHGiGrsYT5Bw=="
