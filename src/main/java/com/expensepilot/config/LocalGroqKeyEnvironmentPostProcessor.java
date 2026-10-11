@@ -7,23 +7,21 @@ import org.springframework.core.env.ConfigurableEnvironment;
 import org.springframework.core.env.MapPropertySource;
 import org.springframework.util.StringUtils;
 
-import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
-import java.util.Base64;
 import java.util.Map;
 
 /**
- * Configure the OpenAI-compatible Groq client before Spring AI auto-configuration.
+ * Inject the decrypted local Groq credential before Spring AI auto-configuration.
  *
- * <p>Base64 is an encoding, not encryption. It is deliberately limited to the
- * local profile; production should obtain secrets from a proper secret store.</p>
+ * <p>This is for development only. Encrypting a credential with a password
+ * available in the same public repository does not make it confidential.</p>
  */
 public final class LocalGroqKeyEnvironmentPostProcessor
         implements EnvironmentPostProcessor, Ordered {
 
     @Override
     public int getOrder() {
-        // ConfigDataEnvironmentPostProcessor must first load application-local.yml.
+        // application-local.yml must be loaded by ConfigData processing first.
         return Ordered.LOWEST_PRECEDENCE;
     }
 
@@ -39,35 +37,27 @@ public final class LocalGroqKeyEnvironmentPostProcessor
         }
 
         String explicitKey = environment.getProperty("GROQ_API_KEY");
-        String configuredBase64 = environment.getProperty(
-                "expensepilot.groq.api-key-base64");
+        String encryptedKey = environment.getProperty(
+                "expensepilot.groq.encrypted-key");
 
-        String key;
+        final String key;
         if (StringUtils.hasText(explicitKey)) {
             key = explicitKey.trim();
         }
-        else if (StringUtils.hasText(configuredBase64)) {
-            try {
-                key = new String(
-                        Base64.getDecoder().decode(configuredBase64.trim()),
-                        StandardCharsets.UTF_8);
-            }
-            catch (IllegalArgumentException exception) {
-                throw new IllegalStateException(
-                        "Invalid expensepilot.groq.api-key-base64 configuration",
-                        exception);
-            }
+        else if (StringUtils.hasText(encryptedKey)) {
+            String password = environment.getProperty(
+                    "expensepilot.groq.decryption-password");
+            key = GroqTokenCipher.decrypt(encryptedKey, password);
         }
         else {
             throw new IllegalStateException(
-                    "Local profile requires a Groq API key (Base64 config or GROQ_API_KEY)");
+                    "Local profile requires Groq encrypted-key or GROQ_API_KEY");
         }
 
         if (!StringUtils.hasText(key)) {
             throw new IllegalStateException("Decoded Groq API key is empty");
         }
 
-        // Property source has priority over the generic application.yml placeholder.
         environment.getPropertySources().addFirst(new MapPropertySource(
                 "expensepilotLocalGroqKey",
                 Map.of("spring.ai.openai.api-key", key)));
