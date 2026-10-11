@@ -67,9 +67,6 @@ def wait_for_state(task_id, desired, seconds=220):
 
 
 def main():
-    status, payload = get("/")
-    # Homepage is HTML, so the JSON helper cannot be used for this endpoint.
-    # Check the health and API endpoints directly instead.
     status, health = get("/actuator/health")
     check(status == 200 and health.get("status") == "UP",
           "Spring Boot health is UP")
