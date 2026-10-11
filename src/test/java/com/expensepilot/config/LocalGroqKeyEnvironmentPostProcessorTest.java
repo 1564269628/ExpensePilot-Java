@@ -4,60 +4,72 @@ import org.junit.jupiter.api.Test;
 import org.springframework.boot.SpringApplication;
 import org.springframework.mock.env.MockEnvironment;
 
-import java.nio.charset.StandardCharsets;
-import java.util.Base64;
-
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class LocalGroqKeyEnvironmentPostProcessorTest {
 
+    // Synthetic, non-functional test token encrypted using AES-256-GCM/PBKDF2.
+    private static final String ENCRYPTED_FIXTURE =
+            "v1:WsyrDqBNMZu69VYQftdNim0zQ2BKXxC4Aug3jEVHgPSN9EJha0YVGy84lWBovIYJgVGFMdghFKq5dkIDUVBrCw==";
+
     private final LocalGroqKeyEnvironmentPostProcessor processor =
             new LocalGroqKeyEnvironmentPostProcessor();
 
     @Test
-    void decodesLocalKeyBeforeSpringAiConfiguration() {
-        MockEnvironment environment = new MockEnvironment();
-        environment.setActiveProfiles("local");
-        environment.setProperty("expensepilot.local.enabled", "true");
-        environment.setProperty(
-                "expensepilot.groq.api-key-base64",
-                Base64.getEncoder().encodeToString(
-                        "gsk_example_local_value".getBytes(StandardCharsets.UTF_8)));
+    void decryptsEncryptedKeyBeforeSpringAiConfiguration() {
+        MockEnvironment environment = localEnvironment();
+        environment.setProperty("expensepilot.groq.encrypted-key", ENCRYPTED_FIXTURE);
+        environment.setProperty("expensepilot.groq.decryption-password", "123456");
 
         processor.postProcessEnvironment(
                 environment, new SpringApplication(Object.class));
 
         assertThat(environment.getProperty("spring.ai.openai.api-key"))
-                .isEqualTo("gsk_example_local_value");
+                .isEqualTo("gsk_fixture_not_live");
     }
 
     @Test
-    void explicitlyProvidedKeyOverridesBase64() {
-        MockEnvironment environment = new MockEnvironment();
-        environment.setActiveProfiles("local");
-        environment.setProperty("expensepilot.local.enabled", "true");
-        environment.setProperty("expensepilot.groq.api-key-base64", "invalid!");
-        environment.setProperty("GROQ_API_KEY", "gsk_overridden");
+    void explicitEnvironmentKeyTakesPriority() {
+        MockEnvironment environment = localEnvironment();
+        environment.setProperty("expensepilot.groq.encrypted-key", "invalid!");
+        environment.setProperty("GROQ_API_KEY", "manual-override-for-test");
 
         processor.postProcessEnvironment(
                 environment, new SpringApplication(Object.class));
 
         assertThat(environment.getProperty("spring.ai.openai.api-key"))
-                .isEqualTo("gsk_overridden");
+                .isEqualTo("manual-override-for-test");
     }
 
     @Test
-    void rejectsMalformedBase64WithoutPrintingItsContent() {
-        MockEnvironment environment = new MockEnvironment();
-        environment.setActiveProfiles("local");
-        environment.setProperty("expensepilot.local.enabled", "true");
-        environment.setProperty("expensepilot.groq.api-key-base64", "invalid!");
+    void rejectsWrongDecryptionPassword() {
+        MockEnvironment environment = localEnvironment();
+        environment.setProperty("expensepilot.groq.encrypted-key", ENCRYPTED_FIXTURE);
+        environment.setProperty("expensepilot.groq.decryption-password", "incorrect");
 
         assertThatThrownBy(() -> processor.postProcessEnvironment(
                 environment, new SpringApplication(Object.class)))
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("Invalid expensepilot.groq.api-key-base64");
+                .hasMessageContaining("Cannot decrypt Groq token");
+    }
+
+    @Test
+    void rejectsMalformedCiphertext() {
+        assertThatThrownBy(() -> GroqTokenCipher.decrypt("v1:invalid!", "123456"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("encoding");
+    }
+
+    @Test
+    void encryptionAndDecryptionRoundTrip() {
+        String encrypted = GroqTokenCipher.encrypt(
+                "synthetic-test-only-secret", "123456");
+
+        assertThat(encrypted).startsWith("v1:");
+        assertThat(encrypted).doesNotContain("synthetic-test-only-secret");
+        assertThat(GroqTokenCipher.decrypt(encrypted, "123456"))
+                .isEqualTo("synthetic-test-only-secret");
     }
 
     @Test
@@ -70,5 +82,12 @@ class LocalGroqKeyEnvironmentPostProcessorTest {
 
         assertThat(environment.getProperty("spring.ai.openai.api-key"))
                 .isNull();
+    }
+
+    private MockEnvironment localEnvironment() {
+        MockEnvironment environment = new MockEnvironment();
+        environment.setActiveProfiles("local");
+        environment.setProperty("expensepilot.local.enabled", "true");
+        return environment;
     }
 }
