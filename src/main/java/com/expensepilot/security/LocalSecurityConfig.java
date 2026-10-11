@@ -44,8 +44,7 @@ public class LocalSecurityConfig {
         return http.build();
     }
 
-    @Bean
-    OncePerRequestFilter localDemoUserFilter() {
+    private OncePerRequestFilter localDemoUserFilter() {
         return new OncePerRequestFilter() {
             @Override
             protected void doFilterInternal(
