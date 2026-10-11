@@ -20,7 +20,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install AES probe dependencies
-        run: python -m pip install --disable-pip-version-check cryptography
+        run: python -m pip install --disable-pip-version-check cryptography groq
       - name: Check direct Groq endpoint with decrypted repository configuration
         run: python ops/probe_groq.py
   java-and-frontend:
