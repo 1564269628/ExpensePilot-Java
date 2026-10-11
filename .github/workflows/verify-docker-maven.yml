@@ -1,0 +1,68 @@
+name: Docker Maven mirror and cache regression
+
+on:
+  push:
+    branches:
+      - main
+      - fix/windows-docker-maven-download
+    paths:
+      - Dockerfile
+      - pom.xml
+      - ops/maven-settings.xml
+      - docker-compose.yml
+      - .github/workflows/verify-docker-maven.yml
+  pull_request:
+    branches:
+      - main
+    paths:
+      - Dockerfile
+      - pom.xml
+      - ops/maven-settings.xml
+      - docker-compose.yml
+      - .github/workflows/verify-docker-maven.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docker-maven-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  java-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - name: Verify all Java unit tests with the pinned compiler
+        run: mvn -B -ntp -Dstyle.color=never clean verify
+
+  docker-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Maven settings and Docker Compose
+        shell: bash
+        run: |
+          python3 -c "import xml.etree.ElementTree as ET; ET.parse('ops/maven-settings.xml')"
+          docker compose config -q
+      - name: Build Windows-compatible Docker image using default Maven mirror
+        run: docker build --progress=plain -t expensepilot-maven-verified:ci .
+      - name: Verify runnable Spring Boot fat jar is inside the resulting image
+        shell: bash
+        run: |
+          container_id="$(docker create expensepilot-maven-verified:ci)"
+          docker cp "$container_id:/app/app.jar" /tmp/expensepilot-app.jar
+          docker rm "$container_id"
+          test -s /tmp/expensepilot-app.jar
+          unzip -p /tmp/expensepilot-app.jar META-INF/MANIFEST.MF > /tmp/manifest.txt
+          cat /tmp/manifest.txt
+          grep -q 'Start-Class: com.expensepilot.ExpensePilotApplication' /tmp/manifest.txt
+          echo 'SUCCESS: Docker image contains executable Spring Boot jar'
