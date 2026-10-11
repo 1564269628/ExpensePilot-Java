@@ -3,8 +3,14 @@ name: ExpensePilot Java + Windows-style Docker verification
 on:
   push:
     branches:
+      - main
       - feat/windows-groq-fullstack
   workflow_dispatch:
+
+# New commits supersede stale validation runs on the same branch.
+concurrency:
+  group: expensepilot-verification-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
