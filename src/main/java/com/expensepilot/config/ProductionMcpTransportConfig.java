@@ -7,6 +7,7 @@ import org.springframework.ai.mcp.client.common.autoconfigure.NamedClientMcpTran
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Profile;
 import org.springframework.http.HttpHeaders;
 import org.springframework.util.StringUtils;
 import org.springframework.web.reactive.function.client.WebClient;
@@ -23,6 +24,7 @@ import java.util.Set;
  * 与生命周期关闭；这里只替换 transport 创建方式，以支持 per-server 认证。</p>
  */
 @Configuration
+@Profile("!local")
 @EnableConfigurationProperties(ProductionMcpProperties.class)
 public class ProductionMcpTransportConfig {
 
