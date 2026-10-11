@@ -36,7 +36,7 @@ public class ExpenseTaskController {
         );
 
         return ResponseEntity.accepted().body(Map.of(
-                "taskId", taskId,
+                "taskId", Long.toString(taskId),
                 "message", "任务已进入 Spring AI Alibaba Graph 工作流"
         ));
     }
@@ -67,7 +67,7 @@ public class ExpenseTaskController {
         expenseAgentService.resume(taskId);
 
         return ResponseEntity.accepted().body(Map.of(
-                "taskId", taskId,
+                "taskId", Long.toString(taskId),
                 "message", "故障恢复请求已提交"
         ));
     }
