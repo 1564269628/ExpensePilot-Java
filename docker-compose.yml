@@ -41,7 +41,7 @@ services:
 
   rocketmq-broker:
     image: apache/rocketmq:5.3.1
-    command: sh mqbroker -n rocketmq-namesrv:9876 -c /home/rocketmq/conf/broker-local.conf
+    command: sh mqbroker -n rocketmq-namesrv:9876 -c /home/rocketmq/rocketmq-5.3.1/conf/broker-local.conf
     depends_on:
       rocketmq-namesrv:
         condition: service_started
@@ -49,7 +49,7 @@ services:
       NAMESRV_ADDR: rocketmq-namesrv:9876
       JAVA_OPT_EXT: "-Xms512m -Xmx512m"
     volumes:
-      - ./ops/rocketmq-broker.conf:/home/rocketmq/conf/broker-local.conf:ro
+      - ./ops/rocketmq-broker.conf:/home/rocketmq/rocketmq-5.3.1/conf/broker-local.conf:ro
       - rocketmq-store:/home/rocketmq/store
     restart: unless-stopped
 
