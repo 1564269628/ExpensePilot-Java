@@ -25,6 +25,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDate;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -96,13 +97,18 @@ public class LocalWorkspaceController {
 
     @GetMapping("/tasks")
     public List<Map<String, Object>> tasks() {
-        return jdbc.queryForList("""
+        List<Map<String, Object>> rows = jdbc.queryForList("""
                 select id as taskId, status, current_node as currentNode,
                        retry_count as retryCount, last_error as lastError,
                        created_at as createdAt, updated_at as updatedAt
                   from expense_task where user_id=?
                  order by created_at desc limit 100
                 """, currentUser.userId());
+        return rows.stream().map(row -> {
+            Map<String, Object> task = new LinkedHashMap<>(row);
+            task.put("taskId", String.valueOf(row.get("taskId")));
+            return task;
+        }).toList();
     }
 
     @GetMapping("/tasks/{taskId}/details")
