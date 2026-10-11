@@ -95,10 +95,14 @@ jobs:
             fi
             sleep 5
           done
-          curl -fsS http://127.0.0.1:8080/actuator/health | grep -q UP
-          curl -fsS http://127.0.0.1:8080/ | grep -q ExpensePilot
-          curl -fsS http://127.0.0.1:8080/app.js | grep -q expense
-          curl -fsS http://127.0.0.1:8080/styles.css | grep -q sidebar
+          curl -fsS -o /tmp/expense-health.json http://127.0.0.1:8080/actuator/health
+          grep -q UP /tmp/expense-health.json
+          curl -fsS -o /tmp/expense-home.html http://127.0.0.1:8080/
+          grep -q ExpensePilot /tmp/expense-home.html
+          curl -fsS -o /tmp/expense-app.js http://127.0.0.1:8080/app.js
+          grep -q expense /tmp/expense-app.js
+          curl -fsS -o /tmp/expense-styles.css http://127.0.0.1:8080/styles.css
+          grep -q sidebar /tmp/expense-styles.css
       - name: Test live Groq, Planner, local tools, approvals and RocketMQ
         run: python3 ops/smoke_local.py
       - name: Verify live material supplementation and policy rejection
