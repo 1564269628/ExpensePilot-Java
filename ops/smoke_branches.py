@@ -5,6 +5,7 @@ Runs after smoke_local.py in the same full Docker test environment.
 No model mocks: every new Agent task invokes the configured live Groq model.
 """
 import uuid
+import time
 
 from smoke_local import check, get, post, wait_for_state
 
@@ -113,5 +114,9 @@ def policy_violation_then_reject():
 
 if __name__ == "__main__":
     missing_material_then_reject()
+    # The real Qwen planner may consume ~750 output tokens. The account's
+    # 1000 output-token/minute cap requires spacing sequential live runs.
+    print("Waiting for Groq output token quota to reset", flush=True)
+    time.sleep(75)
     policy_violation_then_reject()
     print("GRAPH BRANCH END-TO-END RESULT: PASS", flush=True)

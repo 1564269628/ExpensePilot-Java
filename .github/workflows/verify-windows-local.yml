@@ -105,6 +105,8 @@ jobs:
           grep -q sidebar /tmp/expense-styles.css
       - name: Test live Groq, Planner, local tools, approvals and RocketMQ
         run: python3 ops/smoke_local.py
+      - name: Cool down Groq output-token quota before more real planner calls
+        run: sleep 75
       - name: Verify live material supplementation and policy rejection
         run: python3 ops/smoke_branches.py
       - uses: actions/setup-node@v4
@@ -114,6 +116,8 @@ jobs:
         run: |
           npm install --no-save playwright@1.56.1
           npx playwright install --with-deps chromium
+      - name: Cool down Groq quota before browser-driven Agent workflow
+        run: sleep 75
       - name: Exercise complete frontend in a real Chromium browser
         run: node ops/browser_smoke.cjs
       - name: Upload screenshots from browser acceptance run

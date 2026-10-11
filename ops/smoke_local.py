@@ -155,7 +155,20 @@ def main():
     check(download_status == 200 and saved_bytes == png,
           "File download returns the exact persisted upload bytes")
 
-    status, model = post("/api/v1/local/groq-check", {})
+    # Groq's free/on-demand tier can hit an output-tokens-per-minute quota.
+    # Honor the provider's suggested delay rather than mocking a response.
+    import re
+    for attempt in range(8):
+        status, model = post("/api/v1/local/groq-check", {})
+        message = str(model.get("message", ""))
+        if status == 502 and "HTTP 429" in message and attempt < 7:
+            match = re.search(r"try again in ([0-9.]+)s", message, re.I)
+            delay = min(95, max(15, float(match.group(1)) + 5)) if match else 65
+            print("Groq output token quota reached; retrying after provider cooldown",
+                  flush=True)
+            time.sleep(delay)
+            continue
+        break
     diagnostic = str(model)[:900]
     import re
     diagnostic = re.sub(r"gsk_[A-Za-z0-9_-]+", "[REDACTED]", diagnostic)
