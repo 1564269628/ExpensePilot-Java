@@ -88,8 +88,13 @@ def main():
           "Deterministic local policy rules available")
 
     status, model = post("/api/v1/local/groq-check", {})
+    diagnostic = str(model)[:900]
+    import re
+    diagnostic = re.sub(r"gsk_[A-Za-z0-9_-]+", "[REDACTED]", diagnostic)
     check(status == 200 and model.get("live") is True
-          and bool(model.get("response")), "Real Groq API call returned a response")
+          and bool(model.get("response")),
+          "Real Groq API call returned a response (HTTP "
+          + str(status) + ": " + diagnostic + ")")
 
     idem = str(uuid.uuid4())
     request_text = seed["suggestedRequest"]
