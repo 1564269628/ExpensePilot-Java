@@ -76,6 +76,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        # Defaults to Alibaba Cloud for China; override via MAVEN_MIRROR_URL if needed.
+        MAVEN_MIRROR_URL: ${MAVEN_MIRROR_URL:-https://maven.aliyun.com/repository/public}
     depends_on:
       mysql:
         condition: service_healthy
