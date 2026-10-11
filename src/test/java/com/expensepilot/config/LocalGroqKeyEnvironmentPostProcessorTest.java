@@ -9,9 +9,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class LocalGroqKeyEnvironmentPostProcessorTest {
 
-    // Synthetic, non-functional test token encrypted using AES-256-GCM/PBKDF2.
+    private static final String TEST_TOKEN = "synthetic-local-token-not-live";
     private static final String ENCRYPTED_FIXTURE =
-            "v1:WsyrDqBNMZu69VYQftdNim0zQ2BKXxC4Aug3jEVHgPSN9EJha0YVGy84lWBovIYJgVGFMdghFKq5dkIDUVBrCw==";
+            GroqTokenCipher.encrypt(TEST_TOKEN, "123456");
 
     private final LocalGroqKeyEnvironmentPostProcessor processor =
             new LocalGroqKeyEnvironmentPostProcessor();
@@ -26,7 +26,7 @@ class LocalGroqKeyEnvironmentPostProcessorTest {
                 environment, new SpringApplication(Object.class));
 
         assertThat(environment.getProperty("spring.ai.openai.api-key"))
-                .isEqualTo("gsk_fixture_not_live");
+                .isEqualTo(TEST_TOKEN);
     }
 
     @Test
