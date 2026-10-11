@@ -5,6 +5,7 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
 import org.springframework.stereotype.Component;
+import org.springframework.beans.factory.annotation.Value;
 
 import java.util.Arrays;
 
@@ -16,6 +17,10 @@ import java.util.Arrays;
 @Component
 public class CurrentUser {
 
+    @Value("${expensepilot.local.enabled:false}")
+    private boolean localEnabled;
+
+
     public String userId() {
         Authentication authentication = authentication();
         if (authentication instanceof JwtAuthenticationToken jwt) {
@@ -23,6 +28,10 @@ public class CurrentUser {
             if (subject != null && !subject.isBlank()) {
                 return subject;
             }
+        }
+
+        if (localEnabled && "local-demo-user".equals(authentication.getName())) {
+            return authentication.getName();
         }
 
         throw new AccessDeniedException(
