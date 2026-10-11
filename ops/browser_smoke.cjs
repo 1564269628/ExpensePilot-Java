@@ -93,7 +93,7 @@ async function main() {
                  '64-bit task IDs must remain strings in JSON');
     const taskId = created.taskId;
     assert.ok(taskId.length >= 16);
-    await page.locator('#selectedTaskId').getByText('#' + taskId).waitFor();
+    await page.locator('#selectedTaskId').filter({ hasText: '#' + taskId }).waitFor();
     await page.locator('#taskList [data-task-id="' + taskId + '"]').waitFor();
     log('Natural-language task created and full 64-bit ID selected without rounding');
 
