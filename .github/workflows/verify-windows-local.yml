@@ -61,7 +61,9 @@ jobs:
         with:
           node-version: '22'
       - name: Validate frontend syntax
-        run: node --check src/main/resources/static/app.js
+        run: |
+          node --check src/main/resources/static/app.js
+          node --check ops/browser_smoke.cjs
       - name: Compile and run all Java unit tests
         run: mvn -B -ntp -Dstyle.color=never clean verify
       - name: Validate Docker Compose configuration
@@ -93,6 +95,22 @@ jobs:
           curl -fsS http://127.0.0.1:8080/styles.css | grep -q sidebar
       - name: Test live Groq, Planner, local tools, approvals and RocketMQ
         run: python3 ops/smoke_local.py
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install Playwright Chromium for actual browser acceptance tests
+        run: |
+          npm install --no-save playwright@1.56.1
+          npx playwright install --with-deps chromium
+      - name: Exercise complete frontend in a real Chromium browser
+        run: node ops/browser_smoke.cjs
+      - name: Upload screenshots from browser acceptance run
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: expensepilot-workbench-screenshots
+          path: artifacts/*.png
+          if-no-files-found: ignore
       - name: Debug failing containers without exposing config
         if: failure()
         run: |
